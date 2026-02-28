@@ -19,6 +19,9 @@
           export STATE_STORAGE_ACCOUNT="@option.state_storage_account@"
           export STATE_CONTAINER="@option.state_container@"
           export STATE_KEY="@option.state_key@"
+          export VM_NAME_INPUT="@option.vm_name@"
+          export ADMIN_PASSWORD_SECRET_NAME="@option.admin_password_secret_name@"
+          export KV_NAME="@option.keyvault_name@"
 
           bash "@option.repo_dir@/autodeploy/rundeck/scripts/job1_provision_vm.sh"
     keepgoing: false
@@ -60,3 +63,15 @@
       label: State blob key
       required: true
       value: autodeploy/windows-prototype.tfstate
+    - name: vm_name
+      label: VM name
+      required: false
+      value: winproto01
+    - name: admin_password_secret_name
+      label: Local admin secret name
+      required: false
+      value: winproto01-localadmin
+    - name: keyvault_name
+      label: Key Vault name
+      required: true
+      value: fabmas-kv1

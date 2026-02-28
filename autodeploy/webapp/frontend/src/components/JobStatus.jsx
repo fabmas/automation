@@ -13,8 +13,9 @@ const POLL_MS = 3000;
 export default function JobStatus({ executionId, label, onComplete }) {
   const [status, setStatus] = useState('running');
   const [log, setLog] = useState([]);
-  const [offset, setOffset] = useState(0);
+  const offsetRef = useRef(0);
   const logRef = useRef(null);
+  const completedRef = useRef(false);
 
   /* Poll status + log */
   useEffect(() => {
@@ -25,7 +26,7 @@ export default function JobStatus({ executionId, label, onComplete }) {
       try {
         const [statusRes, logRes] = await Promise.all([
           getJobStatus(executionId),
-          getJobLog(executionId, offset),
+          getJobLog(executionId, offsetRef.current),
         ]);
 
         if (cancelled) return;
@@ -35,13 +36,24 @@ export default function JobStatus({ executionId, label, onComplete }) {
 
         if (logRes.entries?.length) {
           setLog((prev) => [...prev, ...logRes.entries.map((e) => e.log)]);
-          setOffset(logRes.offset ?? offset);
+        }
+        // Always advance the offset so we don't re-fetch old entries
+        if (logRes.offset != null) {
+          offsetRef.current = logRes.offset;
         }
 
         const terminal = ['succeeded', 'failed', 'aborted'].includes(s);
-        if (terminal) {
+        if (terminal && !completedRef.current) {
+          completedRef.current = true;
+          // Fetch any remaining log lines one last time
+          try {
+            const finalLog = await getJobLog(executionId, offsetRef.current);
+            if (!cancelled && finalLog.entries?.length) {
+              setLog((prev) => [...prev, ...finalLog.entries.map((e) => e.log)]);
+            }
+          } catch { /* ignore */ }
           onComplete?.(s);
-        } else {
+        } else if (!terminal) {
           setTimeout(poll, POLL_MS);
         }
       } catch {

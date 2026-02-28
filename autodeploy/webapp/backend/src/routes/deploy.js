@@ -26,10 +26,12 @@ router.post('/', async (req, res) => {
     }
 
     // Run Job 1 — Terraform provisioning
+    // Pass vm_name so Rundeck/Terraform create the VM with the requested name.
+    // state_key per-VM avoids overwriting existing state.
     const job1Exec = await rundeck.runJob(JOB1_ID, {
-      // Options are pre-filled with defaults in the Rundeck job definition;
-      // we only need to override what the user chooses.
-      // TODO: when Terraform supports variable VM name, pass it here.
+      vm_name: sanitized,
+      state_key: `autodeploy/${sanitized}.tfstate`,
+      admin_password_secret_name: `${sanitized}-localadmin`,
     });
 
     const result = {
@@ -55,10 +57,17 @@ router.post('/', async (req, res) => {
  * Body: { vmName: "winproto02" }
  *
  * Triggers Job 2 (Ansible post-config / domain join).
+ * Passes localadmin_secret_name so the playbook reads the correct KV secret.
  */
 router.post('/job2', async (req, res) => {
   try {
-    const job2Exec = await rundeck.runJob(JOB2_ID, {});
+    const { vmName } = req.body;
+    const opts = {};
+    if (vmName) {
+      opts.localadmin_secret_name = `${vmName}-localadmin`;
+    }
+
+    const job2Exec = await rundeck.runJob(JOB2_ID, opts);
 
     res.json({
       job2: {

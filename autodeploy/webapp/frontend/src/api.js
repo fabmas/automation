@@ -10,20 +10,24 @@ export async function startDeploy(vmName, joinDomain) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `HTTP ${res.status}`);
   }
-  return res.json();
+  const data = await res.json();
+  // Flatten: backend returns { job1: { executionId } }
+  return { executionId: data.job1.executionId };
 }
 
-export async function startJob2() {
+export async function startJob2(vmName) {
   const res = await fetch(`${API_BASE}/deploy/job2`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ vmName }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `HTTP ${res.status}`);
   }
-  return res.json();
+  const data = await res.json();
+  // Flatten: backend returns { job2: { executionId } }
+  return { executionId: data.job2.executionId };
 }
 
 export async function getJobStatus(executionId) {

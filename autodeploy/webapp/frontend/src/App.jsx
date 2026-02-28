@@ -14,6 +14,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [joinDomain, setJoinDomain] = useState(false);
+  const [currentVmName, setCurrentVmName] = useState('');
 
   /* Each step: { executionId, label } */
   const [steps, setSteps] = useState([]);
@@ -23,6 +24,7 @@ export default function App() {
     setError('');
     setSteps([]);
     setJoinDomain(join);
+    setCurrentVmName(vmName.trim().toLowerCase().replace(/[^a-z0-9-]/g, ''));
 
     try {
       const { executionId } = await startDeploy(vmName, join);
@@ -38,7 +40,7 @@ export default function App() {
       /* If step 0 (Job 1) succeeded and joinDomain → trigger Job 2 */
       if (index === 0 && result === 'succeeded' && joinDomain) {
         try {
-          const { executionId } = await startJob2();
+          const { executionId } = await startJob2(currentVmName);
           setSteps((prev) => [
             ...prev,
             { executionId, label: 'Job 2 — Post-config (DNS + Domain Join)' },
@@ -52,7 +54,7 @@ export default function App() {
       /* Terminal — unlock the form */
       setBusy(false);
     },
-    [joinDomain],
+    [joinDomain, currentVmName],
   );
 
   return (

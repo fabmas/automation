@@ -22,6 +22,21 @@ STATE_KEY="${STATE_KEY:-autodeploy/windows-prototype.tfstate}"
 TF_WORKDIR="${TF_WORKDIR:-${REPO_DIR}/autodeploy/terraform}"
 ANSIBLE_INVENTORY_PATH="${ANSIBLE_INVENTORY_PATH:-${REPO_DIR}/autodeploy/ansible/inventory/terraform.yml}"
 
+# ── Dynamic VM name from webapp / Rundeck option ──
+VM_NAME_INPUT="${VM_NAME_INPUT:-}"
+ADMIN_PASSWORD_SECRET_NAME="${ADMIN_PASSWORD_SECRET_NAME:-}"
+
+if [[ -n "$VM_NAME_INPUT" ]]; then
+  export TF_VAR_vm_name="$VM_NAME_INPUT"
+  export TF_VAR_computer_name="$(echo "$VM_NAME_INPUT" | tr '[:lower:]' '[:upper:]')"
+  echo "[job1] vm_name override: $VM_NAME_INPUT (computer_name: $TF_VAR_computer_name)"
+fi
+
+if [[ -n "$ADMIN_PASSWORD_SECRET_NAME" ]]; then
+  export TF_VAR_admin_password_secret_name="$ADMIN_PASSWORD_SECRET_NAME"
+  echo "[job1] admin_password_secret_name override: $ADMIN_PASSWORD_SECRET_NAME"
+fi
+
 echo "[job1] repo_dir=$REPO_DIR"
 echo "[job1] tf_workdir=$TF_WORKDIR"
 echo "[job1] inventory_path=$ANSIBLE_INVENTORY_PATH"
@@ -45,6 +60,20 @@ terraform version | head -n 2 || true
 
 az login --identity --output none || true
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
+
+# ── Ensure Key Vault secret exists for the local admin password ──
+# If vm_name was overridden, the secret name is <vm_name>-localadmin.
+# If it doesn't exist yet, generate a random password and store it.
+KV_NAME="${KV_NAME:-fabmas-kv1}"
+_SECRET_NAME="${TF_VAR_admin_password_secret_name:-winproto01-localadmin}"
+if ! az keyvault secret show --vault-name "$KV_NAME" --name "$_SECRET_NAME" --query id -o tsv &>/dev/null; then
+  echo "[job1] Secret '$_SECRET_NAME' not found in $KV_NAME — creating with random password"
+  _GEN_PASS="$(openssl rand -base64 24 | tr -d '=+/' | head -c 20)A1b!"
+  az keyvault secret set --vault-name "$KV_NAME" --name "$_SECRET_NAME" --value "$_GEN_PASS" --output none
+  echo "[job1] Secret '$_SECRET_NAME' created"
+else
+  echo "[job1] Secret '$_SECRET_NAME' already exists in $KV_NAME"
+fi
 
 # Una tantum: container state
 az storage container create \
