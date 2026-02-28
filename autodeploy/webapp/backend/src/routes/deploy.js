@@ -4,6 +4,8 @@ const rundeck = require('../services/rundeck');
 
 const JOB1_ID = process.env.JOB1_ID;
 const JOB2_ID = process.env.JOB2_ID;
+const JOB3_ID = process.env.JOB3_ID;
+const JOB4_ID = process.env.JOB4_ID;
 
 /**
  * POST /api/deploy
@@ -78,6 +80,60 @@ router.post('/job2', async (req, res) => {
     });
   } catch (err) {
     console.error('[deploy/job2] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/deploy/job3
+ * Body: { vmName: "test01" }
+ *
+ * Triggers Job 3 (Ansible — Install IIS).
+ */
+router.post('/job3', async (req, res) => {
+  try {
+    const { vmName } = req.body;
+    const opts = {};
+    if (vmName) {
+      opts.localadmin_secret_name = `${vmName}-localadmin`;
+    }
+    const job3Exec = await rundeck.runJob(JOB3_ID, opts);
+    res.json({
+      job3: {
+        executionId: job3Exec.id,
+        href: job3Exec.href,
+        status: job3Exec.status,
+      },
+    });
+  } catch (err) {
+    console.error('[deploy/job3] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/deploy/job4
+ * Body: { vmName: "test01" }
+ *
+ * Triggers Job 4 (Ansible — Install 7-Zip unattended).
+ */
+router.post('/job4', async (req, res) => {
+  try {
+    const { vmName } = req.body;
+    const opts = {};
+    if (vmName) {
+      opts.localadmin_secret_name = `${vmName}-localadmin`;
+    }
+    const job4Exec = await rundeck.runJob(JOB4_ID, opts);
+    res.json({
+      job4: {
+        executionId: job4Exec.id,
+        href: job4Exec.href,
+        status: job4Exec.status,
+      },
+    });
+  } catch (err) {
+    console.error('[deploy/job4] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

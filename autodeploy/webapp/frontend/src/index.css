@@ -172,6 +172,24 @@ h1 {
 .step-title { font-weight: 600; font-size: 0.95rem; }
 .step-detail { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
 
+/* ---- Log toggle ---- */
+.btn-log-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.btn-log-toggle:hover {
+  color: var(--text);
+  border-color: var(--primary);
+}
+
 /* ---- Log ---- */
 .log-box {
   background: #000;

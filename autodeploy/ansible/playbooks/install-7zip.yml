@@ -1,0 +1,48 @@
+---
+# install-7zip.yml — Installa 7-Zip in modo unattended su Windows target via WinRM.
+#
+# Uso da Rundeck / CLI:
+#   ansible-playbook -i inventory/terraform.yml playbooks/install-7zip.yml
+
+- name: Install 7-Zip (unattended)
+  hosts: windows
+  gather_facts: false
+
+  vars:
+    sevenzip_version: "24.09"
+    sevenzip_url: "https://www.7-zip.org/a/7z{{ sevenzip_version | replace('.', '') }}-x64.msi"
+    sevenzip_installer: 'C:\Temp\7zip-installer.msi'
+
+  tasks:
+    - name: Crea cartella temp
+      ansible.windows.win_file:
+        path: 'C:\Temp'
+        state: directory
+
+    - name: Scarica 7-Zip MSI
+      ansible.windows.win_get_url:
+        url: "{{ sevenzip_url }}"
+        dest: "{{ sevenzip_installer }}"
+        force: false
+
+    - name: Installa 7-Zip (msiexec /qn)
+      ansible.windows.win_package:
+        path: "{{ sevenzip_installer }}"
+        product_id: '{23170F69-40C1-2702-{{ sevenzip_version | replace(".", "") }}-000001000000}'
+        arguments: '/qn /norestart'
+        state: present
+      register: install_result
+
+    - name: Verifica installazione
+      ansible.windows.win_stat:
+        path: 'C:\Program Files\7-Zip\7z.exe'
+      register: sz_exe
+
+    - name: Mostra risultato
+      ansible.builtin.debug:
+        msg: "7-Zip installed: {{ sz_exe.stat.exists | default(false) }}"
+
+    - name: Pulizia installer
+      ansible.windows.win_file:
+        path: "{{ sevenzip_installer }}"
+        state: absent

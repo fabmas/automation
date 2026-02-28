@@ -1,0 +1,38 @@
+---
+# install-iis.yml — Installa IIS (Web-Server) su Windows target via WinRM.
+#
+# Uso da Rundeck / CLI:
+#   ansible-playbook -i inventory/terraform.yml playbooks/install-iis.yml
+
+- name: Install IIS (Internet Information Services)
+  hosts: windows
+  gather_facts: false
+
+  tasks:
+    - name: Installa feature Web-Server (IIS)
+      ansible.windows.win_feature:
+        name:
+          - Web-Server
+          - Web-Mgmt-Console
+          - Web-Default-Doc
+          - Web-Static-Content
+        state: present
+        include_sub_features: false
+        include_management_tools: true
+      register: iis_result
+
+    - name: Reboot se richiesto dalla feature
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+      when: iis_result.reboot_required | default(false)
+
+    - name: Verifica che il servizio W3SVC sia attivo
+      ansible.windows.win_service:
+        name: W3SVC
+        state: started
+        start_mode: auto
+      register: w3svc
+
+    - name: Mostra stato IIS
+      ansible.builtin.debug:
+        msg: "IIS W3SVC service is {{ w3svc.state }} (start_mode: {{ w3svc.start_mode }})"

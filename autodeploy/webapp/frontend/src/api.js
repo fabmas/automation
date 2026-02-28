@@ -41,3 +41,31 @@ export async function getJobLog(executionId, offset = 0) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+export async function startJob3(vmName) {
+  const res = await fetch(`${API_BASE}/deploy/job3`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vmName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return { executionId: data.job3.executionId };
+}
+
+export async function startJob4(vmName) {
+  const res = await fetch(`${API_BASE}/deploy/job4`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vmName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return { executionId: data.job4.executionId };
+}

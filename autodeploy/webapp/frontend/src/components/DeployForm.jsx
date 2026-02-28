@@ -3,6 +3,8 @@ import { useState } from 'react';
 export default function DeployForm({ onDeploy, disabled }) {
   const [vmName, setVmName] = useState('');
   const [joinDomain, setJoinDomain] = useState(false);
+  const [installIIS, setInstallIIS] = useState(false);
+  const [install7Zip, setInstall7Zip] = useState(false);
   const [error, setError] = useState('');
 
   const validate = (name) => /^[a-zA-Z0-9]{1,15}$/.test(name);
@@ -14,7 +16,7 @@ export default function DeployForm({ onDeploy, disabled }) {
       setError('Nome VM: solo lettere/numeri, max 15 caratteri.');
       return;
     }
-    onDeploy({ vmName, joinDomain });
+    onDeploy({ vmName, joinDomain, installIIS, install7Zip });
   };
 
   return (
@@ -46,6 +48,32 @@ export default function DeployForm({ onDeploy, disabled }) {
             disabled={disabled}
           />
           <label htmlFor="joinDomain">Join al dominio (fabmas.it)</label>
+        </div>
+      </div>
+
+      <div className="form-group">
+        <div className="checkbox-group">
+          <input
+            id="installIIS"
+            type="checkbox"
+            checked={installIIS}
+            onChange={(e) => setInstallIIS(e.target.checked)}
+            disabled={disabled}
+          />
+          <label htmlFor="installIIS">Installa IIS (Internet Information Services)</label>
+        </div>
+      </div>
+
+      <div className="form-group">
+        <div className="checkbox-group">
+          <input
+            id="install7Zip"
+            type="checkbox"
+            checked={install7Zip}
+            onChange={(e) => setInstall7Zip(e.target.checked)}
+            disabled={disabled}
+          />
+          <label htmlFor="install7Zip">Installa 7-Zip (unattended)</label>
         </div>
       </div>
 

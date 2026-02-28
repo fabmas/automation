@@ -1,34 +1,73 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import DeployForm from './components/DeployForm';
 import JobStatus from './components/JobStatus';
-import { startDeploy, startJob2 } from './api';
+import { startDeploy, startJob2, startJob3, startJob4 } from './api';
 import './index.css';
 
 /*
-  Workflow:
-  1. User compiles form → POST /api/deploy  → Job 1 (Terraform)
-  2. If joinDomain and Job 1 succeeds  → POST /api/deploy/job2 → Job 2 (Ansible)
+  Workflow (sequential):
+  1. Job 1 — Terraform provisioning (always)
+  2. Job 2 — Domain join           (if joinDomain)
+  3. Job 3 — Install IIS           (if installIIS)
+  4. Job 4 — Install 7-Zip         (if install7Zip)
 */
 
 export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [joinDomain, setJoinDomain] = useState(false);
-  const [currentVmName, setCurrentVmName] = useState('');
-
-  /* Each step: { executionId, label } */
   const [steps, setSteps] = useState([]);
 
-  const handleDeploy = useCallback(async ({ vmName, joinDomain: join }) => {
+  // Keep a queue of pending jobs to trigger after the current one completes
+  const queueRef = useRef([]);
+  const vmNameRef = useRef('');
+
+  const triggerNext = useCallback(async () => {
+    if (queueRef.current.length === 0) {
+      setBusy(false);
+      return;
+    }
+    const next = queueRef.current.shift();
+    try {
+      const { executionId } = await next.fn();
+      setSteps((prev) => [...prev, { executionId, label: next.label }]);
+    } catch (err) {
+      setError(`${next.label} trigger failed: ${err.message}`);
+      setBusy(false);
+    }
+  }, []);
+
+  const handleDeploy = useCallback(async ({ vmName, joinDomain, installIIS, install7Zip }) => {
     setBusy(true);
     setError('');
     setSteps([]);
-    setJoinDomain(join);
-    setCurrentVmName(vmName.trim().toLowerCase().replace(/[^a-z0-9-]/g, ''));
+    const sanitized = vmName.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+    vmNameRef.current = sanitized;
+
+    // Build the queue of follow-up jobs
+    const queue = [];
+    if (joinDomain) {
+      queue.push({
+        label: 'Job 2 — Post-config (DNS + Domain Join)',
+        fn: () => startJob2(sanitized),
+      });
+    }
+    if (installIIS) {
+      queue.push({
+        label: 'Job 3 — Installa IIS',
+        fn: () => startJob3(sanitized),
+      });
+    }
+    if (install7Zip) {
+      queue.push({
+        label: 'Job 4 — Installa 7-Zip',
+        fn: () => startJob4(sanitized),
+      });
+    }
+    queueRef.current = queue;
 
     try {
-      const { executionId } = await startDeploy(vmName, join);
-      setSteps([{ executionId, label: `Job 1 — Provision VM "${vmName}"` }]);
+      const { executionId } = await startDeploy(vmName, joinDomain);
+      setSteps([{ executionId, label: `Job 1 — Provision VM "${sanitized}"` }]);
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -36,25 +75,16 @@ export default function App() {
   }, []);
 
   const handleStepComplete = useCallback(
-    async (index, result) => {
-      /* If step 0 (Job 1) succeeded and joinDomain → trigger Job 2 */
-      if (index === 0 && result === 'succeeded' && joinDomain) {
-        try {
-          const { executionId } = await startJob2(currentVmName);
-          setSteps((prev) => [
-            ...prev,
-            { executionId, label: 'Job 2 — Post-config (DNS + Domain Join)' },
-          ]);
-          return; // keep busy
-        } catch (err) {
-          setError(`Job 2 trigger failed: ${err.message}`);
-        }
+    async (_index, result) => {
+      if (result === 'succeeded') {
+        await triggerNext();
+      } else {
+        // Job failed/aborted — stop the chain
+        queueRef.current = [];
+        setBusy(false);
       }
-
-      /* Terminal — unlock the form */
-      setBusy(false);
     },
-    [joinDomain, currentVmName],
+    [triggerNext],
   );
 
   return (

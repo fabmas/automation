@@ -82,6 +82,8 @@ export default function JobStatus({ executionId, label, onComplete }) {
     status === 'succeeded' ? '✓' :
     status === 'failed'    ? '✗' : '…';
 
+  const [logVisible, setLogVisible] = useState(false);
+
   return (
     <div className="card">
       <div className="step">
@@ -92,9 +94,19 @@ export default function JobStatus({ executionId, label, onComplete }) {
             {STATUS_LABELS[status] || status} — Execution #{executionId}
           </div>
         </div>
+        {log.length > 0 && (
+          <button
+            type="button"
+            className="btn-log-toggle"
+            onClick={() => setLogVisible((v) => !v)}
+            title={logVisible ? 'Nascondi log' : 'Mostra log'}
+          >
+            {logVisible ? '▲ Log' : '▼ Log'}
+          </button>
+        )}
       </div>
 
-      {log.length > 0 && (
+      {logVisible && log.length > 0 && (
         <div className="log-box" ref={logRef}>
           {log.map((line, i) => (
             <div key={i} className="log-line">{line}</div>
