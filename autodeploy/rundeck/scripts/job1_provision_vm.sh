@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "[job1] starting ($(date -Is))"
+echo "[job1] user=$(whoami) host=$(hostname -f 2>/dev/null || hostname)"
+
 REPO_DIR="${REPO_DIR:-/opt/automation}"
 
 AZ_TENANT_ID="${AZ_TENANT_ID:-MngEnvMCAP655724.onmicrosoft.com}"
@@ -14,7 +17,15 @@ STATE_KEY="${STATE_KEY:-autodeploy/windows-prototype.tfstate}"
 TF_WORKDIR="${TF_WORKDIR:-${REPO_DIR}/autodeploy/terraform}"
 ANSIBLE_INVENTORY_PATH="${ANSIBLE_INVENTORY_PATH:-${REPO_DIR}/autodeploy/ansible/inventory/terraform.yml}"
 
+echo "[job1] repo_dir=$REPO_DIR"
+echo "[job1] tf_workdir=$TF_WORKDIR"
+echo "[job1] inventory_path=$ANSIBLE_INVENTORY_PATH"
+
 cd "$REPO_DIR"
+
+command -v az >/dev/null || { echo "[job1] ERROR: az not found"; exit 1; }
+command -v terraform >/dev/null || { echo "[job1] ERROR: terraform not found"; exit 1; }
+terraform version | head -n 2 || true
 
 az login --identity --output none || true
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
@@ -65,3 +76,5 @@ EOF
 echo "VM_NAME=${VM_NAME}"
 echo "VM_IP=${VM_IP}"
 echo "Inventory updated: ${ANSIBLE_INVENTORY_PATH}"
+
+echo "[job1] done ($(date -Is))"
