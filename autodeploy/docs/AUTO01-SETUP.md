@@ -222,6 +222,13 @@ Se `az keyvault secret set` fallisce per autorizzazione: serve permesso **set** 
 
 Terraform (job 1):
 ```bash
+# Una tantum: crea il container backend se non esiste (usa Entra ID, non access key)
+az storage container create \
+  --account-name fabmastorageaccount01 \
+  --name tfstate \
+  --auth-mode login \
+  --public-access off
+
 terraform -chdir=autodeploy/terraform init -input=false \
   -backend-config="resource_group_name=RG-Automation" \
   -backend-config="storage_account_name=fabmastorageaccount01" \
