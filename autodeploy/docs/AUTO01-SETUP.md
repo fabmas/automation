@@ -174,9 +174,23 @@ Permessi: i job girano come utente `rundeck`. Se il repo è in `/opt/automation`
 
 ```bash
 sudo chgrp -R rundeck /opt/automation
+sudo chmod -R g+rX /opt/automation
 sudo chmod -R g+rwX /opt/automation/autodeploy/terraform
 sudo chmod -R g+rwX /opt/automation/autodeploy/ansible/inventory
+sudo chmod -R g+rX /opt/automation/autodeploy/rundeck/scripts
 sudo chmod -R o-rwx /opt/automation
+```
+
+Se fai `git pull` come `root`, a seconda della `umask` i file aggiornati possono diventare **non leggibili** dall’utente `rundeck` (errore tipico: `bash: ... Permission denied`).
+
+Scelta consigliata: aggiorna il repo come utente `rundeck`:
+```bash
+sudo -u rundeck git -C /opt/automation pull
+```
+
+Opzionale (ma utile): mantieni il gruppo `rundeck` sui nuovi file/dir creati sotto `autodeploy/`:
+```bash
+sudo find /opt/automation/autodeploy -type d -exec chmod g+s {} +
 ```
 
 ---

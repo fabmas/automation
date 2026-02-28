@@ -42,16 +42,24 @@ Su auto01 (una tantum):
 ```bash
 sudo chgrp -R rundeck /opt/automation
 
+# Assicura che rundeck possa leggere gli script anche dopo update del repo
+sudo chmod -R g+rX /opt/automation
+
 # Consenti a rundeck di scrivere dove serve
 sudo chmod -R g+rwX /opt/automation/autodeploy/terraform
 sudo chmod -R g+rwX /opt/automation/autodeploy/ansible/inventory
+sudo chmod -R g+rX /opt/automation/autodeploy/rundeck/scripts
 
 # (opzionale) mantiene il gruppo rundeck sui nuovi file/dir creati
-sudo find /opt/automation/autodeploy/terraform -type d -exec chmod g+s {} +
-sudo find /opt/automation/autodeploy/ansible/inventory -type d -exec chmod g+s {} +
+sudo find /opt/automation/autodeploy -type d -exec chmod g+s {} +
 
 # Riduci accesso per altri utenti locali
 sudo chmod -R o-rwx /opt/automation
+```
+
+Nota: per evitare regressioni di permessi, fai gli aggiornamenti git come utente `rundeck` (consigliato):
+```bash
+sudo -u rundeck git -C /opt/automation pull
 ```
 
 ## Troubleshooting rapido
