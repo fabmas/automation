@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Ensure tools installed via pipx or custom paths are reachable
-for p in /root/.local/bin /home/*/.local/bin /usr/local/bin /opt/homebrew/bin; do
+for p in /var/lib/rundeck/.local/bin /root/.local/bin /home/*/.local/bin /usr/local/bin; do
   [[ -d "$p" ]] && export PATH="$p:$PATH"
 done
 
