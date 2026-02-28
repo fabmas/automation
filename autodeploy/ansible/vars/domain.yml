@@ -1,0 +1,7 @@
+---
+# Variabili non sensibili
+ad_dns_primary: "10.0.0.4"          # DC1
+ad_dns_domain: "fabmas.it"
+
+# Account per domain join (in forma UPN o DOMAIN\\user). Esempio: fabmas\\joiner
+ad_join_user: "fabmas\\joiner"

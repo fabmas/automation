@@ -1,0 +1,17 @@
+.DS_Store
+Thumbs.db
+
+# Terraform
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/crash.log
+**/crash.*.log
+**/.terraform.lock.hcl
+
+# Ansible
+**/*.retry
+
+# Local editor / OS
+.vscode/

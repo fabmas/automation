@@ -1,0 +1,23 @@
+# Questo file viene rigenerato dal Job Rundeck "Provision VM" usando gli output Terraform.
+# Mantenerlo qui serve come location standard per Job 2.
+
+all:
+  children:
+    windows:
+      hosts:
+        # Esempio (auto-generato):
+        # winproto01:
+        #   ansible_host: 10.0.0.123
+        winproto01:
+          ansible_host: 0.0.0.0
+      vars:
+        ansible_connection: winrm
+        ansible_winrm_transport: ntlm
+        ansible_winrm_scheme: http
+        ansible_port: 5985
+        ansible_winrm_server_cert_validation: ignore
+
+        # Credenziali di bootstrap (local admin) - NON committare password.
+        # Suggerito: valorizzare via Ansible Vault oppure via variabili d'ambiente Rundeck.
+        ansible_user: "localadmin"
+        ansible_password: "__SET_ME_VIA_VAULT_OR_RUNDECK__"

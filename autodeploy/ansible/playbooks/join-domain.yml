@@ -1,0 +1,56 @@
+---
+- name: Join Windows VM to fabmas.it (guest configuration only)
+  hosts: windows
+  gather_facts: false
+
+  collections:
+    - ansible.windows
+    - microsoft.ad
+
+  vars_files:
+    - ../vars/domain.yml
+    - ../vars/vault.yml
+
+  tasks:
+    - name: Configure DNS client to point to DC1
+      ansible.windows.win_dns_client:
+        adapter_names: '*'
+        dns_servers:
+          - "{{ ad_dns_primary }}"
+        suffix_search_list:
+          - "{{ ad_dns_domain }}"
+
+    - name: Join domain (no auto reboot here)
+      microsoft.ad.membership:
+        dns_domain_name: "{{ ad_dns_domain }}"
+        domain_admin_user: "{{ ad_join_user }}"
+        domain_admin_password: "{{ ad_join_password }}"
+        domain_server: "{{ ad_dns_primary }}"
+        state: domain
+        reboot: false
+      register: domain_join
+
+    - name: Reboot if required by domain join
+      ansible.windows.win_reboot:
+        reboot_timeout: 1800
+        post_reboot_delay: 60
+        test_command: 'exit (Get-Service -Name Netlogon).Status -ne "Running"'
+      when: domain_join.reboot_required
+
+    - name: Verify domain membership
+      ansible.windows.win_powershell:
+        script: |
+          $cs = Get-CimInstance -ClassName Win32_ComputerSystem
+          [pscustomobject]@{
+            PartOfDomain = $cs.PartOfDomain
+            Domain       = $cs.Domain
+            Name         = $cs.Name
+          } | ConvertTo-Json -Compress
+      register: domain_status
+
+    - name: Fail if not joined
+      ansible.builtin.fail:
+        msg: "Host is not joined to the expected domain. Status: {{ domain_status.output }}"
+      vars:
+        domain_status_json: "{{ (domain_status.output | default([])) | first | default('{}') | from_json }}"
+      when: "(domain_status_json.PartOfDomain | default(false)) | bool == false or (domain_status_json.Domain | default('')) != ad_dns_domain"
