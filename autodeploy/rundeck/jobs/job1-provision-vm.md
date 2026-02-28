@@ -25,6 +25,7 @@ terraform -chdir=autodeploy/terraform init -input=false \
   -backend-config="storage_account_name=fabmastorageaccount01" \
   -backend-config="container_name=tfstate" \
   -backend-config="key=autodeploy/windows-prototype.tfstate" \
+  -backend-config="use_azuread_auth=true" \
   -backend-config="subscription_id=9af59c0f-7661-48ec-ac0d-fc61688f01ea" \
   -backend-config="tenant_id=MngEnvMCAP655724.onmicrosoft.com"
 ```

@@ -227,6 +227,7 @@ terraform -chdir=autodeploy/terraform init -input=false \
   -backend-config="storage_account_name=fabmastorageaccount01" \
   -backend-config="container_name=tfstate" \
   -backend-config="key=autodeploy/windows-prototype.tfstate" \
+  -backend-config="use_azuread_auth=true" \
   -backend-config="subscription_id=$AZ_SUBSCRIPTION_ID" \
   -backend-config="tenant_id=$AZ_TENANT_ID"
 
