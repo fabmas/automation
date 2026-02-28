@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure tools installed via pipx or custom paths are reachable
+for p in /root/.local/bin /home/*/.local/bin /usr/local/bin /opt/homebrew/bin; do
+  [[ -d "$p" ]] && export PATH="$p:$PATH"
+done
+
 echo "[job1] starting ($(date -Is))"
 echo "[job1] user=$(whoami) host=$(hostname -f 2>/dev/null || hostname)"
 
