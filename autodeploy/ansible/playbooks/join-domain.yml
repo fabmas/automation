@@ -25,7 +25,6 @@
         dns_domain_name: "{{ ad_dns_domain }}"
         domain_admin_user: "{{ ad_join_user }}"
         domain_admin_password: "{{ ad_join_password }}"
-        domain_server: "{{ ad_dns_primary }}"
         state: domain
         reboot: false
       register: domain_join
