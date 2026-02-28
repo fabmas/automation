@@ -92,8 +92,8 @@ variable "tags" {
   type        = map(string)
   description = "Tag comuni (CAF / governance)"
   default = {
-    workload   = "autodeploy"
-    managedBy  = "terraform"
-    prototype  = "true"
+    workload  = "autodeploy"
+    managedBy = "terraform"
+    prototype = "true"
   }
 }

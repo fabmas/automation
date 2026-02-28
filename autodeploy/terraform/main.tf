@@ -81,7 +81,7 @@ resource "azurerm_windows_virtual_machine" "vm" {
   admin_username = var.admin_username
   admin_password = data.azurerm_key_vault_secret.vm_admin_password.value
 
-  computer_name = length(trim(var.computer_name)) > 0 ? var.computer_name : upper(var.vm_name)
+  computer_name = length(trimspace(var.computer_name)) > 0 ? var.computer_name : upper(var.vm_name)
 
   network_interface_ids = [
     azurerm_network_interface.nic.id,
