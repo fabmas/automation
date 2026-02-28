@@ -190,6 +190,21 @@ h1 {
   border-color: var(--primary);
 }
 
+/* ---- Parallel badge ---- */
+.badge-parallel {
+  display: inline-block;
+  background: rgba(250, 204, 21, 0.15);
+  border: 1px solid #facc15;
+  color: #facc15;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+  letter-spacing: 0.03em;
+}
+
 /* ---- Log ---- */
 .log-box {
   background: #000;

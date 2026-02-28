@@ -10,7 +10,7 @@ const STATUS_LABELS = {
 
 const POLL_MS = 3000;
 
-export default function JobStatus({ executionId, label, onComplete }) {
+export default function JobStatus({ executionId, label, parallel, onComplete }) {
   const [status, setStatus] = useState('running');
   const [log, setLog] = useState([]);
   const offsetRef = useRef(0);
@@ -89,7 +89,10 @@ export default function JobStatus({ executionId, label, onComplete }) {
       <div className="step">
         <div className={`step-icon ${iconClass}`}>{iconChar}</div>
         <div className="step-info">
-          <div className="step-title">{label}</div>
+          <div className="step-title">
+            {label}
+            {parallel && <span className="badge-parallel">⚡ Parallelo</span>}
+          </div>
           <div className="step-detail">
             {STATUS_LABELS[status] || status} — Execution #{executionId}
           </div>
