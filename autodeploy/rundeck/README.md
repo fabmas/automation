@@ -7,6 +7,7 @@ Obiettivo: eseguire 2 job separati su `auto01`:
 ## Prerequisiti su auto01
 - Repo clonato in `/opt/automation`.
 - Rundeck installato e raggiungibile su `http://<auto01>:4440`.
+- Java 17 attivo come default (`java -version`).
 - Azure CLI login con Managed Identity funzionante: `az login --identity`.
 - RBAC già configurato per:
   - Storage backend state (Blob Data) su `fabmastorageaccount01`.
@@ -33,3 +34,8 @@ Il Job 2 può leggere la password dal Key Vault (default) oppure da Key Storage 
 ## Note operative
 - Job 1 genera/aggiorna `autodeploy/ansible/inventory/terraform.yml` su auto01.
 - Job 2 usa WinRM su 5985 (NSG limitato a auto01) e fa join dominio + reboot + verify.
+
+## Troubleshooting rapido
+Se `rundeckd` è `active` ma non ascolta su `:4440`:
+- `sudo ss -lntp | egrep ':4440|:4443' || true`
+- verifica Java: `java -version` e imposta Java 17 con `sudo update-alternatives --config java`, poi `sudo systemctl restart rundeckd`.

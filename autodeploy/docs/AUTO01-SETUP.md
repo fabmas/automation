@@ -158,6 +158,16 @@ systemctl enable --now rundeckd
 systemctl status rundeckd --no-pager
 ```
 
+Se `rundeckd` risulta `active (running)` ma **non ascolta** su `:4440`, su Ubuntu 24.04 verifica che Rundeck stia usando **Java 17** (non Java 21):
+```bash
+java -version
+sudo update-alternatives --list java || true
+sudo update-alternatives --config java
+
+sudo systemctl restart rundeckd
+sudo ss -lntp | egrep ':4440|:4443' || true
+```
+
 Default UI: `http://<auto01>:4440` (apri NSG solo da IP amministrativi).
 
 ---
