@@ -7,18 +7,18 @@
   scheduleEnabled: false
   sequence:
     commands:
-      - exec: |-
+      - script: |-
           #!/usr/bin/env bash
           set -euo pipefail
-          export REPO_DIR="${option.repo_dir}"
-          export ANSIBLE_WORKDIR="${option.ansible_workdir}"
-          export ANSIBLE_INVENTORY="${option.ansible_inventory}"
-          export AZ_SUBSCRIPTION_ID="${option.az_subscription_id}"
-          export KEYVAULT_NAME="${option.keyvault_name}"
-          export LOCALADMIN_SECRET_NAME="${option.localadmin_secret_name}"
-          export DOMAIN_JOIN_SECRET_NAME="${option.domain_join_secret_name}"
+          export REPO_DIR="@option.repo_dir@"
+          export ANSIBLE_WORKDIR="@option.ansible_workdir@"
+          export ANSIBLE_INVENTORY="@option.ansible_inventory@"
+          export AZ_SUBSCRIPTION_ID="@option.az_subscription_id@"
+          export KEYVAULT_NAME="@option.keyvault_name@"
+          export LOCALADMIN_SECRET_NAME="@option.localadmin_secret_name@"
+          export DOMAIN_JOIN_SECRET_NAME="@option.domain_join_secret_name@"
 
-          bash "${option.repo_dir}/autodeploy/rundeck/scripts/job2_post_config.sh"
+          bash "@option.repo_dir@/autodeploy/rundeck/scripts/job2_post_config.sh"
     keepgoing: false
     strategy: node-first
   options:

@@ -7,20 +7,20 @@
   scheduleEnabled: false
   sequence:
     commands:
-      - exec: |-
+      - script: |-
           #!/usr/bin/env bash
           set -euo pipefail
-          export REPO_DIR="${option.repo_dir}"
-          export TF_WORKDIR="${option.tf_workdir}"
-          export ANSIBLE_INVENTORY_PATH="${option.ansible_inventory_path}"
-          export AZ_TENANT_ID="${option.az_tenant_id}"
-          export AZ_SUBSCRIPTION_ID="${option.az_subscription_id}"
-          export BACKEND_RG="${option.backend_rg}"
-          export STATE_STORAGE_ACCOUNT="${option.state_storage_account}"
-          export STATE_CONTAINER="${option.state_container}"
-          export STATE_KEY="${option.state_key}"
+          export REPO_DIR="@option.repo_dir@"
+          export TF_WORKDIR="@option.tf_workdir@"
+          export ANSIBLE_INVENTORY_PATH="@option.ansible_inventory_path@"
+          export AZ_TENANT_ID="@option.az_tenant_id@"
+          export AZ_SUBSCRIPTION_ID="@option.az_subscription_id@"
+          export BACKEND_RG="@option.backend_rg@"
+          export STATE_STORAGE_ACCOUNT="@option.state_storage_account@"
+          export STATE_CONTAINER="@option.state_container@"
+          export STATE_KEY="@option.state_key@"
 
-          bash "${option.repo_dir}/autodeploy/rundeck/scripts/job1_provision_vm.sh"
+          bash "@option.repo_dir@/autodeploy/rundeck/scripts/job1_provision_vm.sh"
     keepgoing: false
     strategy: node-first
   options:
