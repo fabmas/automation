@@ -16,6 +16,7 @@ ANSIBLE_INVENTORY_PATH="${ANSIBLE_INVENTORY_PATH:-${REPO_DIR}/autodeploy/ansible
 
 cd "$REPO_DIR"
 
+az login --identity --output none || true
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
 
 # Una tantum: container state

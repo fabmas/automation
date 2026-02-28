@@ -19,6 +19,9 @@ DOMAIN_JOIN_PASSWORD="${DOMAIN_JOIN_PASSWORD:-}"
 
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
 
+az login --identity --output none || true
+az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
+
 cd "$ANSIBLE_WORKDIR"
 
 TMPDIR=$(mktemp -d)
