@@ -23,6 +23,17 @@ echo "[job1] inventory_path=$ANSIBLE_INVENTORY_PATH"
 
 cd "$REPO_DIR"
 
+test -d "$TF_WORKDIR" || { echo "[job1] ERROR: tf_workdir not found: $TF_WORKDIR"; exit 1; }
+test -w "$TF_WORKDIR" || { echo "[job1] ERROR: tf_workdir not writable by $(whoami): $TF_WORKDIR"; echo "[job1] Hint: chgrp -R rundeck /opt/automation && chmod -R g+rwX /opt/automation/autodeploy/terraform"; exit 1; }
+
+# Ensure the local terraform working folder is writable (providers/locks etc.)
+mkdir -p "$TF_WORKDIR/.terraform" 2>/dev/null || true
+if [[ -d "$TF_WORKDIR/.terraform" ]] && [[ ! -w "$TF_WORKDIR/.terraform" ]]; then
+  echo "[job1] ERROR: $TF_WORKDIR/.terraform is not writable by $(whoami)"
+  echo "[job1] Hint: remove/repair root-owned .terraform and re-run: sudo rm -rf $TF_WORKDIR/.terraform"
+  exit 1
+fi
+
 command -v az >/dev/null || { echo "[job1] ERROR: az not found"; exit 1; }
 command -v terraform >/dev/null || { echo "[job1] ERROR: terraform not found"; exit 1; }
 terraform version | head -n 2 || true
