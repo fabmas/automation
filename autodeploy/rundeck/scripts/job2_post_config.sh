@@ -14,7 +14,7 @@ REPO_DIR="${REPO_DIR:-/opt/automation}"
 AZ_SUBSCRIPTION_ID="${AZ_SUBSCRIPTION_ID:-9af59c0f-7661-48ec-ac0d-fc61688f01ea}"
 
 ANSIBLE_WORKDIR="${ANSIBLE_WORKDIR:-${REPO_DIR}/autodeploy/ansible}"
-ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-${ANSIBLE_WORKDIR}/inventory/terraform.yml}"
+export ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-${ANSIBLE_WORKDIR}/inventory/terraform.yml}"
 
 echo "[job2] repo_dir=$REPO_DIR"
 echo "[job2] ansible_workdir=$ANSIBLE_WORKDIR"
@@ -73,7 +73,8 @@ else
 fi
 
 # Create a runtime inventory with the localadmin password injected.
-INVENTORY_RUNTIME="$TMPDIR/inventory.runtime.yml"
+export INVENTORY_RUNTIME="$TMPDIR/inventory.runtime.yml"
+export LOCALADMIN_PASSWORD
 
 # Render by copying the file and replacing the placeholder line.
 python3 - <<'PY'
