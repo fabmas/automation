@@ -1,0 +1,62 @@
+- defaultTab: nodes
+  description: Provisioning solo infrastruttura (Terraform) + genera inventory Ansible.
+  executionEnabled: true
+  loglevel: INFO
+  name: "01 - Provision VM (Terraform)"
+  nodeFilterEditable: false
+  scheduleEnabled: false
+  sequence:
+    commands:
+      - exec: |-
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export REPO_DIR="${option.repo_dir}"
+          export TF_WORKDIR="${option.tf_workdir}"
+          export ANSIBLE_INVENTORY_PATH="${option.ansible_inventory_path}"
+          export AZ_TENANT_ID="${option.az_tenant_id}"
+          export AZ_SUBSCRIPTION_ID="${option.az_subscription_id}"
+          export BACKEND_RG="${option.backend_rg}"
+          export STATE_STORAGE_ACCOUNT="${option.state_storage_account}"
+          export STATE_CONTAINER="${option.state_container}"
+          export STATE_KEY="${option.state_key}"
+
+          bash "${option.repo_dir}/autodeploy/rundeck/scripts/job1_provision_vm.sh"
+    keepgoing: false
+    strategy: node-first
+  options:
+    - name: repo_dir
+      label: Repo directory
+      required: true
+      value: /opt/automation
+    - name: tf_workdir
+      label: Terraform workdir
+      required: true
+      value: /opt/automation/autodeploy/terraform
+    - name: ansible_inventory_path
+      label: Inventory path
+      required: true
+      value: /opt/automation/autodeploy/ansible/inventory/terraform.yml
+    - name: az_tenant_id
+      label: Tenant ID (domain)
+      required: true
+      value: MngEnvMCAP655724.onmicrosoft.com
+    - name: az_subscription_id
+      label: Subscription ID
+      required: true
+      value: 9af59c0f-7661-48ec-ac0d-fc61688f01ea
+    - name: backend_rg
+      label: Backend RG
+      required: true
+      value: RG-Automation
+    - name: state_storage_account
+      label: State storage account
+      required: true
+      value: fabmastorageaccount01
+    - name: state_container
+      label: State container
+      required: true
+      value: tfstate
+    - name: state_key
+      label: State blob key
+      required: true
+      value: autodeploy/windows-prototype.tfstate

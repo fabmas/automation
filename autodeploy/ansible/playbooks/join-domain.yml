@@ -9,7 +9,7 @@
 
   vars_files:
     - ../vars/domain.yml
-    - ../vars/vault.yml
+    - "{{ vault_vars_file | default('../vars/vault.yml') }}"
 
   tasks:
     - name: Configure DNS client to point to DC1

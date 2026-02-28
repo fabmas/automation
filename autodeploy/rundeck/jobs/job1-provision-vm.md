@@ -1,5 +1,7 @@
 # Rundeck Job 1 — Provision VM (Terraform)
 
+> Nota: per import in Rundeck usa `job1-provision-vm.yaml` (stesso folder). Questo file resta come documentazione/razionale.
+
 ## Obiettivo
 Provisioning **solo infrastruttura** (VM Windows + NIC + NSG WinRM ristretto) in `RG-AutoDeploy`.
 
@@ -37,6 +39,8 @@ terraform -chdir=autodeploy/terraform init -input=false \
   -backend-config="subscription_id=9af59c0f-7661-48ec-ac0d-fc61688f01ea" \
   -backend-config="tenant_id=MngEnvMCAP655724.onmicrosoft.com"
 ```
+
+In produzione (Rundeck), lo script è in `autodeploy/rundeck/scripts/job1_provision_vm.sh`.
 
 2) Validate + Plan
 ```bash
