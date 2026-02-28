@@ -170,6 +170,15 @@ sudo ss -lntp | egrep ':4440|:4443' || true
 
 Default UI: `http://<auto01>:4440` (apri NSG solo da IP amministrativi).
 
+Permessi: i job girano come utente `rundeck`. Se il repo è in `/opt/automation`, Terraform deve poter scrivere in `autodeploy/terraform` e Job 1 deve poter aggiornare l’inventory Ansible.
+
+```bash
+sudo chgrp -R rundeck /opt/automation
+sudo chmod -R g+rwX /opt/automation/autodeploy/terraform
+sudo chmod -R g+rwX /opt/automation/autodeploy/ansible/inventory
+sudo chmod -R o-rwx /opt/automation
+```
+
 ---
 
 ## 7) Repo e struttura locale

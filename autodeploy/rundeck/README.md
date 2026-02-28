@@ -35,6 +35,25 @@ Il Job 2 può leggere la password dal Key Vault (default) oppure da Key Storage 
 - Job 1 genera/aggiorna `autodeploy/ansible/inventory/terraform.yml` su auto01.
 - Job 2 usa WinRM su 5985 (NSG limitato a auto01) e fa join dominio + reboot + verify.
 
+## Permessi filesystem (importante)
+I job Rundeck girano come utente `rundeck`. Terraform deve poter scrivere nella cartella di lavoro (`.terraform/*`, plan file), e Job 1 deve poter aggiornare l’inventory.
+
+Su auto01 (una tantum):
+```bash
+sudo chgrp -R rundeck /opt/automation
+
+# Consenti a rundeck di scrivere dove serve
+sudo chmod -R g+rwX /opt/automation/autodeploy/terraform
+sudo chmod -R g+rwX /opt/automation/autodeploy/ansible/inventory
+
+# (opzionale) mantiene il gruppo rundeck sui nuovi file/dir creati
+sudo find /opt/automation/autodeploy/terraform -type d -exec chmod g+s {} +
+sudo find /opt/automation/autodeploy/ansible/inventory -type d -exec chmod g+s {} +
+
+# Riduci accesso per altri utenti locali
+sudo chmod -R o-rwx /opt/automation
+```
+
 ## Troubleshooting rapido
 Se `rundeckd` è `active` ma non ascolta su `:4440`:
 - `sudo ss -lntp | egrep ':4440|:4443' || true`
