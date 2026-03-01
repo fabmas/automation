@@ -27,6 +27,10 @@ CLUSTER_IP="${CLUSTER_IP:?CLUSTER_IP is required}"
 AG_NAME="${AG_NAME:?AG_NAME is required}"
 LISTENER_NAME="${LISTENER_NAME:?LISTENER_NAME is required}"
 
+# Domain credentials for cluster operations (Scheduled Task needs domain admin)
+DOMAIN_USER="${DOMAIN_USER:-fabmas\\joiner}"
+DOMAIN_JOIN_SECRET_NAME="${DOMAIN_JOIN_SECRET_NAME:-fabmas-joiner-password}"
+
 # Derive target VM from secret name (should be node1)
 VM_NAME="${VM_NAME:-${LOCALADMIN_SECRET_NAME%-localadmin}}"
 
@@ -71,6 +75,14 @@ if [[ -z "$STORAGE_KEY" ]]; then
   STORAGE_KEY=""
 fi
 
+# Retrieve domain password for cluster Scheduled Task
+echo "[job7] reading domain password from Key Vault: $KEYVAULT_NAME/$DOMAIN_JOIN_SECRET_NAME"
+DOMAIN_PASSWORD=$(az keyvault secret show --vault-name "$KEYVAULT_NAME" --name "$DOMAIN_JOIN_SECRET_NAME" --query value -o tsv)
+if [[ -z "$DOMAIN_PASSWORD" ]]; then
+  echo "[job7] ERROR: could not read domain password — cluster creation needs a domain admin"
+  exit 1
+fi
+
 ansible-playbook -i "$INVENTORY_RUNTIME" playbooks/create-cluster.yml \
   -e "node1_name=$NODE1_NAME" \
   -e "node2_name=$NODE2_NAME" \
@@ -80,6 +92,8 @@ ansible-playbook -i "$INVENTORY_RUNTIME" playbooks/create-cluster.yml \
   -e "listener_name=$LISTENER_NAME" \
   -e "storage_account_name=$STORAGE_ACCOUNT" \
   -e "storage_account_key=$STORAGE_KEY" \
+  -e "domain_user=$DOMAIN_USER" \
+  -e "domain_password=$DOMAIN_PASSWORD" \
   -v
 
 echo "[job7] done ($(date -Is))"
