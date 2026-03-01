@@ -1,0 +1,75 @@
+- defaultTab: nodes
+  description: "Crea WSFC Cluster e configura SQL Always On Availability Group via Ansible."
+  executionEnabled: true
+  loglevel: INFO
+  name: "07 - Create Cluster + AG (Ansible)"
+  nodeFilterEditable: false
+  scheduleEnabled: false
+  sequence:
+    commands:
+      - script: |-
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export REPO_DIR="@option.repo_dir@"
+          export ANSIBLE_WORKDIR="@option.ansible_workdir@"
+          export ANSIBLE_INVENTORY="@option.ansible_inventory@"
+          export AZ_SUBSCRIPTION_ID="@option.az_subscription_id@"
+          export KEYVAULT_NAME="@option.keyvault_name@"
+          export LOCALADMIN_SECRET_NAME="@option.localadmin_secret_name@"
+          export NODE1_NAME="@option.node1_name@"
+          export NODE2_NAME="@option.node2_name@"
+          export CLUSTER_NAME="@option.cluster_name@"
+          export CLUSTER_IP="@option.cluster_ip@"
+          export AG_NAME="@option.ag_name@"
+          export LISTENER_NAME="@option.listener_name@"
+          export LISTENER_IP="@option.listener_ip@"
+
+          bash "@option.repo_dir@/autodeploy/rundeck/scripts/job7_create_cluster.sh"
+    keepgoing: false
+    strategy: node-first
+  options:
+    - name: repo_dir
+      label: Repo directory
+      required: true
+      value: /opt/automation
+    - name: ansible_workdir
+      label: Ansible workdir
+      required: true
+      value: /opt/automation/autodeploy/ansible
+    - name: ansible_inventory
+      label: Inventory path
+      required: true
+      value: /opt/automation/autodeploy/ansible/inventory/terraform.yml
+    - name: az_subscription_id
+      label: Subscription ID
+      required: true
+      value: 9af59c0f-7661-48ec-ac0d-fc61688f01ea
+    - name: keyvault_name
+      label: Key Vault name
+      required: true
+      value: fabmas-kv1
+    - name: localadmin_secret_name
+      label: Local admin secret name
+      required: true
+      value: winproto01-localadmin
+    - name: node1_name
+      label: Node 1 hostname
+      required: true
+    - name: node2_name
+      label: Node 2 hostname
+      required: true
+    - name: cluster_name
+      label: Cluster name (WSFC)
+      required: true
+    - name: cluster_ip
+      label: Cluster IP
+      required: true
+    - name: ag_name
+      label: AG name
+      required: true
+    - name: listener_name
+      label: Listener name
+      required: true
+    - name: listener_ip
+      label: Listener IP
+      required: true

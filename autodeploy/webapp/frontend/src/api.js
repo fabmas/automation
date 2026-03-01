@@ -69,3 +69,47 @@ export async function startJob4(vmName) {
   const data = await res.json();
   return { executionId: data.job4.executionId };
 }
+
+/* ---- Cluster jobs ---- */
+
+export async function startJob5(vmName) {
+  const res = await fetch(`${API_BASE}/deploy/job5`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vmName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return { executionId: data.job5.executionId };
+}
+
+export async function startJob6(vmName) {
+  const res = await fetch(`${API_BASE}/deploy/job6`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vmName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return { executionId: data.job6.executionId };
+}
+
+export async function startJob7({ node1Name, node2Name, clusterName, clusterIp, agName, listenerName, listenerIp }) {
+  const res = await fetch(`${API_BASE}/deploy/job7`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ node1Name, node2Name, clusterName, clusterIp, agName, listenerName, listenerIp }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return { executionId: data.job7.executionId };
+}

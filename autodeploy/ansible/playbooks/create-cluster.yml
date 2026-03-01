@@ -1,0 +1,190 @@
+---
+# create-cluster.yml — Crea un Windows Server Failover Cluster (WSFC)
+#                       e configura un SQL Server Always On Availability Group.
+#
+# Variabili richieste (passate via -e):
+#   cluster_name:   Nome del cluster WSFC (es. SQLCLUSTER01)
+#   cluster_ip:     IP statico del cluster (es. 10.0.0.50)
+#   node1_name:     Hostname del primo nodo
+#   node2_name:     Hostname del secondo nodo
+#   ag_name:        Nome dell'Availability Group (es. AG-SQL01)
+#   listener_name:  Nome del listener AG (es. SQLAG-LSN)
+#   listener_ip:    IP statico del listener (es. 10.0.0.51)
+#
+# NOTA: Questo playbook viene eseguito sul nodo 1 che orchestrerà la creazione
+#       del cluster e la configurazione dell'AG.
+#
+# Uso:
+#   ansible-playbook -i inventory/runtime.yml playbooks/create-cluster.yml \
+#       -e cluster_name=SQLCLUSTER01 -e cluster_ip=10.0.0.50 ...
+
+- name: Create WSFC Cluster + SQL Always On AG
+  hosts: windows
+  gather_facts: false
+
+  vars:
+    cluster_name: ""
+    cluster_ip: ""
+    node1_name: ""
+    node2_name: ""
+    ag_name: ""
+    listener_name: ""
+    listener_ip: ""
+    listener_port: "1433"
+    # Derived
+    node1_fqdn: "{{ node1_name }}.fabmas.it"
+    node2_fqdn: "{{ node2_name }}.fabmas.it"
+
+  tasks:
+    # ---- 1. Validazione cluster ----
+    - name: Esegui Cluster Validation (test)
+      ansible.windows.win_powershell:
+        script: |
+          Test-Cluster -Node "{{ node1_fqdn }}", "{{ node2_fqdn }}" -Include "Storage","Network","Inventory","Configuration" -ErrorAction Stop
+          Write-Output "Cluster validation passed"
+      register: cluster_validation
+      timeout: 600
+
+    - name: Mostra risultato validation
+      ansible.builtin.debug:
+        msg: "{{ cluster_validation.output | default(['N/A']) }}"
+
+    # ---- 2. Creazione Cluster WSFC ----
+    - name: Crea Windows Failover Cluster
+      ansible.windows.win_powershell:
+        script: |
+          $existing = Get-Cluster -Name "{{ cluster_name }}" -ErrorAction SilentlyContinue
+          if ($existing) {
+              Write-Output "Cluster '{{ cluster_name }}' already exists"
+          } else {
+              New-Cluster -Name "{{ cluster_name }}" `
+                  -Node "{{ node1_fqdn }}", "{{ node2_fqdn }}" `
+                  -StaticAddress "{{ cluster_ip }}" `
+                  -NoStorage `
+                  -ErrorAction Stop
+              Write-Output "Cluster '{{ cluster_name }}' created successfully"
+          }
+      register: cluster_create
+      timeout: 300
+
+    - name: Mostra risultato creazione cluster
+      ansible.builtin.debug:
+        msg: "{{ cluster_create.output | default(['N/A']) }}"
+
+    # ---- 3. Abilita Always On su entrambi i nodi ----
+    - name: Abilita SQL Server Always On (nodo 1)
+      ansible.windows.win_powershell:
+        script: |
+          Import-Module SqlServer -ErrorAction Stop
+          Enable-SqlAlwaysOn -ServerInstance "{{ node1_fqdn }}" -Force -ErrorAction Stop
+          Write-Output "Always On enabled on {{ node1_fqdn }}"
+      register: ao_node1
+
+    - name: Abilita SQL Server Always On (nodo 2)
+      ansible.windows.win_powershell:
+        script: |
+          Import-Module SqlServer -ErrorAction Stop
+          Enable-SqlAlwaysOn -ServerInstance "{{ node2_fqdn }}" -Force -ErrorAction Stop
+          Write-Output "Always On enabled on {{ node2_fqdn }}"
+      register: ao_node2
+
+    - name: Restart SQL Server su entrambi i nodi
+      ansible.windows.win_powershell:
+        script: |
+          Restart-Service -Name MSSQLSERVER -Force
+          Write-Output "SQL Server restarted"
+
+    # ---- 4. Crea Availability Group ----
+    - name: Crea Availability Group
+      ansible.windows.win_powershell:
+        script: |
+          Import-Module SqlServer -ErrorAction Stop
+
+          $ag = Get-ChildItem "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups" -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -eq "{{ ag_name }}" }
+          if ($ag) {
+              Write-Output "AG '{{ ag_name }}' already exists"
+              exit 0
+          }
+
+          # Crea endpoint su nodo 1
+          $ep1 = New-SqlHadrEndpoint -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT" `
+              -Name "Hadr_endpoint" -Port 5022 -ErrorAction SilentlyContinue
+          if ($ep1) { Set-SqlHadrEndpoint -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\Endpoints\Hadr_endpoint" -State Started }
+
+          # Crea endpoint su nodo 2
+          Invoke-Sqlcmd -ServerInstance "{{ node2_fqdn }}" -Query @"
+          IF NOT EXISTS (SELECT * FROM sys.endpoints WHERE name = 'Hadr_endpoint')
+          BEGIN
+              CREATE ENDPOINT Hadr_endpoint STATE = STARTED
+                  AS TCP (LISTENER_PORT = 5022)
+                  FOR DATABASE_MIRRORING (ROLE = ALL, AUTHENTICATION = WINDOWS NEGOTIATE, ENCRYPTION = REQUIRED ALGORITHM AES);
+          END
+          "@
+
+          # Crea replica primaria e secondaria
+          $primaryReplica = New-SqlAvailabilityReplica `
+              -Name "{{ node1_fqdn }}" `
+              -EndpointUrl "TCP://{{ node1_fqdn }}:5022" `
+              -AvailabilityMode SynchronousCommit `
+              -FailoverMode Automatic `
+              -AsTemplate -Version 16
+
+          $secondaryReplica = New-SqlAvailabilityReplica `
+              -Name "{{ node2_fqdn }}" `
+              -EndpointUrl "TCP://{{ node2_fqdn }}:5022" `
+              -AvailabilityMode SynchronousCommit `
+              -FailoverMode Automatic `
+              -AsTemplate -Version 16
+
+          # Crea AG
+          New-SqlAvailabilityGroup `
+              -Name "{{ ag_name }}" `
+              -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT" `
+              -AvailabilityReplica @($primaryReplica, $secondaryReplica) `
+              -ErrorAction Stop
+
+          Write-Output "AG '{{ ag_name }}' created successfully"
+      register: ag_create
+      timeout: 300
+
+    - name: Join nodo 2 all'AG
+      ansible.windows.win_powershell:
+        script: |
+          Import-Module SqlServer -ErrorAction Stop
+          Join-SqlAvailabilityGroup -Path "SQLSERVER:\SQL\{{ node2_fqdn }}\DEFAULT" -Name "{{ ag_name }}" -ErrorAction Stop
+          Write-Output "{{ node2_fqdn }} joined AG '{{ ag_name }}'"
+      register: ag_join
+
+    # ---- 5. Crea Listener ----
+    - name: Crea Availability Group Listener
+      ansible.windows.win_powershell:
+        script: |
+          Import-Module SqlServer -ErrorAction Stop
+
+          $listener = Get-ChildItem "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups\{{ ag_name }}\AvailabilityGroupListeners" -ErrorAction SilentlyContinue |
+                      Where-Object { $_.Name -eq "{{ listener_name }}" }
+          if ($listener) {
+              Write-Output "Listener '{{ listener_name }}' already exists"
+              exit 0
+          }
+
+          New-SqlAvailabilityGroupListener `
+              -Name "{{ listener_name }}" `
+              -StaticIp "{{ listener_ip }}/255.255.255.0" `
+              -Port {{ listener_port }} `
+              -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups\{{ ag_name }}" `
+              -ErrorAction Stop
+
+          Write-Output "Listener '{{ listener_name }}' created at {{ listener_ip }}:{{ listener_port }}"
+      register: listener_create
+
+    # ---- 6. Riepilogo ----
+    - name: Riepilogo finale
+      ansible.builtin.debug:
+        msg: |
+          === Cluster + AG Summary ===
+          Cluster:   {{ cluster_name }} ({{ cluster_ip }})
+          Nodes:     {{ node1_fqdn }}, {{ node2_fqdn }}
+          AG:        {{ ag_name }}
+          Listener:  {{ listener_name }} ({{ listener_ip }}:{{ listener_port }})

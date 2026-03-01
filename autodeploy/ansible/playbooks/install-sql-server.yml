@@ -1,0 +1,125 @@
+---
+# install-sql-server.yml — Installa SQL Server (unattended) su Windows target.
+#
+# NOTA: Richiede che l'ISO/media di SQL Server sia accessibile dal nodo.
+#       La variabile sql_iso_url punta alla risorsa scaricabile (storage blob, file share, ecc.)
+#       In alternativa, la variabile sql_setup_path può puntare a un path locale.
+#
+# Uso:
+#   ansible-playbook -i inventory/terraform.yml playbooks/install-sql-server.yml \
+#       -e sql_iso_url=https://... -e sql_sa_password=...
+
+- name: Install SQL Server (unattended)
+  hosts: windows
+  gather_facts: false
+
+  vars:
+    sql_iso_url: ""                         # override via -e o group_vars
+    sql_setup_path: "C:\\SQLSetup"          # working directory
+    sql_instance_name: "MSSQLSERVER"        # default instance
+    sql_sa_password: "{{ ansible_password }}"
+    sql_features: "SQLENGINE,REPLICATION,FULLTEXT"
+    sql_collation: "Latin1_General_CI_AS"
+    sql_svc_account: "NT Service\\MSSQLSERVER"
+    sql_agent_svc_account: "NT Service\\SQLSERVERAGENT"
+
+  tasks:
+    - name: Crea cartella setup
+      ansible.windows.win_file:
+        path: "{{ sql_setup_path }}"
+        state: directory
+
+    - name: Download SQL Server ISO (se sql_iso_url fornito)
+      ansible.windows.win_get_url:
+        url: "{{ sql_iso_url }}"
+        dest: "{{ sql_setup_path }}\\SQLServer.iso"
+        force: false
+      when: sql_iso_url | length > 0
+
+    - name: Monta ISO
+      ansible.windows.win_powershell:
+        script: |
+          $iso = "{{ sql_setup_path }}\SQLServer.iso"
+          if (Test-Path $iso) {
+              $mount = Mount-DiskImage -ImagePath $iso -PassThru
+              $drive = ($mount | Get-Volume).DriveLetter
+              Write-Output $drive
+          } else {
+              Write-Error "ISO not found: $iso"
+              exit 1
+          }
+      register: mount_result
+      when: sql_iso_url | length > 0
+
+    - name: Installa SQL Server (unattended)
+      ansible.windows.win_powershell:
+        script: |
+          $setupDrive = "{{ mount_result.output[0] | default('D') }}"
+          $setupPath = "${setupDrive}:\setup.exe"
+          if (-not (Test-Path $setupPath)) {
+              # Fallback: cerca in sql_setup_path
+              $setupPath = "{{ sql_setup_path }}\setup.exe"
+          }
+          if (-not (Test-Path $setupPath)) {
+              Write-Error "setup.exe not found"
+              exit 1
+          }
+
+          $args = @(
+              "/Q",
+              "/IACCEPTSQLSERVERLICENSETERMS",
+              "/ACTION=Install",
+              "/FEATURES={{ sql_features }}",
+              "/INSTANCENAME={{ sql_instance_name }}",
+              "/SQLSVCACCOUNT=`"{{ sql_svc_account }}`"",
+              "/AGTSVCACCOUNT=`"{{ sql_agent_svc_account }}`"",
+              "/SQLSYSADMINACCOUNTS=`"BUILTIN\Administrators`"",
+              "/SECURITYMODE=SQL",
+              "/SAPWD=`"{{ sql_sa_password }}`"",
+              "/SQLCOLLATION={{ sql_collation }}",
+              "/TCPENABLED=1",
+              "/NPENABLED=0",
+              "/UpdateEnabled=False"
+          )
+
+          $proc = Start-Process -FilePath $setupPath -ArgumentList $args -Wait -PassThru -NoNewWindow
+          if ($proc.ExitCode -notin @(0, 3010)) {
+              Write-Error "SQL Setup failed with exit code $($proc.ExitCode)"
+              exit 1
+          }
+          Write-Output "SQL Server installed (exit code: $($proc.ExitCode))"
+      register: sql_install
+      timeout: 3600
+
+    - name: Reboot se richiesto (exit code 3010)
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+      when: "'3010' in (sql_install.output | default(['']) | join(''))"
+
+    - name: Verifica servizio SQL Server
+      ansible.windows.win_service:
+        name: "MSSQL${{ sql_instance_name if sql_instance_name != 'MSSQLSERVER' else '' }}"
+        state: started
+        start_mode: auto
+      register: sqlsvc
+      when: sql_instance_name != 'MSSQLSERVER'
+
+    - name: Verifica servizio SQL Server (default instance)
+      ansible.windows.win_service:
+        name: MSSQLSERVER
+        state: started
+        start_mode: auto
+      register: sqlsvc_default
+      when: sql_instance_name == 'MSSQLSERVER'
+
+    - name: Mostra stato SQL Server
+      ansible.builtin.debug:
+        msg: "SQL Server {{ sql_instance_name }} installed and running."
+
+    - name: Cleanup — smonta ISO
+      ansible.windows.win_powershell:
+        script: |
+          $iso = "{{ sql_setup_path }}\SQLServer.iso"
+          if (Test-Path $iso) { Dismount-DiskImage -ImagePath $iso -ErrorAction SilentlyContinue }
+      when: sql_iso_url | length > 0
+      ignore_errors: true

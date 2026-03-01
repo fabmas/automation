@@ -1,30 +1,46 @@
 import { useState, useCallback, useRef } from 'react';
 import DeployForm from './components/DeployForm';
+import ClusterForm from './components/ClusterForm';
 import JobStatus from './components/JobStatus';
-import { startDeploy, startJob2, startJob3, startJob4 } from './api';
+import {
+  startDeploy, startJob2, startJob3, startJob4,
+  startJob5, startJob6, startJob7,
+} from './api';
 import './index.css';
 
 /*
-  Workflow:
-  1. Job 1 — Terraform provisioning         (always, sequential)
-  2. Job 2 — Domain join                    (if joinDomain, sequential)
-  3. Job 3 + Job 4 — IIS / 7-Zip            (parallel if both selected)
+  Two workflows sharing the same queue engine:
 
-  Queue items are either:
-    { type: 'single', label, fn }
-    { type: 'parallel', items: [{ label, fn }, ...] }
+  VM:
+    1. Job 1 — Terraform provision
+    2. Job 2 — Domain join (optional)
+    3. Job 3 + 4 — IIS / 7-Zip (parallel if both)
+
+  Cluster (FC + SQL Always On):
+    1. Job 1 x2 — Provision node1 + node2        (parallel)
+    2. Job 2 x2 — Domain join both               (parallel)
+    3. Job 5 x2 — Install Failover Clustering    (parallel)
+    4. Job 6 x2 — Install SQL Server             (parallel)
+    5. Job 7   — Create WSFC + AG                (sequential)
+
+  Queue items: { type:'single', label, fn } | { type:'parallel', items:[…] }
 */
 
+const TABS = [
+  { id: 'vm', label: 'Nuova VM' },
+  { id: 'cluster', label: 'Nuovo Cluster (FC)' },
+];
+
 export default function App() {
+  const [activeTab, setActiveTab] = useState('vm');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  // steps: { executionId, label, parallel?: boolean }
   const [steps, setSteps] = useState([]);
 
   const queueRef = useRef([]);
-  const vmNameRef = useRef('');
-  // Track how many parallel jobs are still running
   const pendingParallelRef = useRef(0);
+
+  /* ---- Queue engine (shared) ---- */
 
   const triggerNext = useCallback(async () => {
     if (queueRef.current.length === 0) {
@@ -34,7 +50,6 @@ export default function App() {
     const next = queueRef.current.shift();
 
     if (next.type === 'parallel') {
-      // Launch all items in parallel
       pendingParallelRef.current = next.items.length;
       const results = await Promise.allSettled(
         next.items.map((item) => item.fn()),
@@ -60,7 +75,6 @@ export default function App() {
         setBusy(false);
       }
     } else {
-      // Single sequential job
       pendingParallelRef.current = 0;
       try {
         const { executionId } = await next.fn();
@@ -72,15 +86,46 @@ export default function App() {
     }
   }, []);
 
+  const handleStepComplete = useCallback(
+    async (_index, result) => {
+      if (result !== 'succeeded') {
+        if (pendingParallelRef.current > 1) {
+          pendingParallelRef.current--;
+          return;
+        }
+        pendingParallelRef.current = 0;
+        queueRef.current = [];
+        setBusy(false);
+        return;
+      }
+      if (pendingParallelRef.current > 1) {
+        pendingParallelRef.current--;
+        return;
+      }
+      pendingParallelRef.current = 0;
+      await triggerNext();
+    },
+    [triggerNext],
+  );
+
+  /* ---- VM flow ---- */
+
   const handleDeploy = useCallback(async ({ vmName, joinDomain, installIIS, install7Zip }) => {
     setBusy(true);
     setError('');
     setSteps([]);
     const sanitized = vmName.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
-    vmNameRef.current = sanitized;
 
-    // Build queue
     const queue = [];
+
+    // 1 — Provision
+    queue.push({
+      type: 'single',
+      label: `Job 1 — Provision VM "${sanitized}"`,
+      fn: () => startDeploy(sanitized, joinDomain),
+    });
+
+    // 2 — Domain join
     if (joinDomain) {
       queue.push({
         type: 'single',
@@ -89,19 +134,13 @@ export default function App() {
       });
     }
 
-    // Job 3 + 4: parallel if both, single if only one
+    // 3+4 — Software
     const softwareJobs = [];
     if (installIIS) {
-      softwareJobs.push({
-        label: 'Job 3 — Installa IIS',
-        fn: () => startJob3(sanitized),
-      });
+      softwareJobs.push({ label: 'Job 3 — Installa IIS', fn: () => startJob3(sanitized) });
     }
     if (install7Zip) {
-      softwareJobs.push({
-        label: 'Job 4 — Installa 7-Zip',
-        fn: () => startJob4(sanitized),
-      });
+      softwareJobs.push({ label: 'Job 4 — Installa 7-Zip', fn: () => startJob4(sanitized) });
     }
     if (softwareJobs.length > 1) {
       queue.push({ type: 'parallel', items: softwareJobs });
@@ -110,54 +149,112 @@ export default function App() {
     }
 
     queueRef.current = queue;
+    await triggerNext();
+  }, [triggerNext]);
 
-    try {
-      const { executionId } = await startDeploy(vmName, joinDomain);
-      setSteps([{ executionId, label: `Job 1 — Provision VM "${sanitized}"` }]);
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
-  }, []);
+  /* ---- Cluster flow ---- */
 
-  const handleStepComplete = useCallback(
-    async (_index, result) => {
-      if (result !== 'succeeded') {
-        // If a parallel job fails, don't stop its sibling — just note error
-        if (pendingParallelRef.current > 1) {
-          pendingParallelRef.current--;
-          return;
-        }
-        // Last (or single) job failed — stop chain
-        pendingParallelRef.current = 0;
-        queueRef.current = [];
-        setBusy(false);
-        return;
-      }
+  const handleClusterDeploy = useCallback(async ({
+    node1Name, node2Name, clusterName, clusterIp,
+    agName, listenerName, listenerIp,
+  }) => {
+    setBusy(true);
+    setError('');
+    setSteps([]);
+    const n1 = node1Name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+    const n2 = node2Name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
 
-      // Succeeded — if parallel, wait for all siblings
-      if (pendingParallelRef.current > 1) {
-        pendingParallelRef.current--;
-        return; // Still waiting for sibling(s)
-      }
-      pendingParallelRef.current = 0;
+    const queue = [];
 
-      // All done for this group — trigger next
-      await triggerNext();
-    },
-    [triggerNext],
-  );
+    // 1 — Provision both VMs
+    queue.push({
+      type: 'parallel',
+      items: [
+        { label: `Job 1 — Provision "${n1}"`, fn: () => startDeploy(n1, false) },
+        { label: `Job 1 — Provision "${n2}"`, fn: () => startDeploy(n2, false) },
+      ],
+    });
+
+    // 2 — Domain join both
+    queue.push({
+      type: 'parallel',
+      items: [
+        { label: `Job 2 — Domain Join "${n1}"`, fn: () => startJob2(n1) },
+        { label: `Job 2 — Domain Join "${n2}"`, fn: () => startJob2(n2) },
+      ],
+    });
+
+    // 3 — Install Failover Clustering on both
+    queue.push({
+      type: 'parallel',
+      items: [
+        { label: `Job 5 — Failover Clustering "${n1}"`, fn: () => startJob5(n1) },
+        { label: `Job 5 — Failover Clustering "${n2}"`, fn: () => startJob5(n2) },
+      ],
+    });
+
+    // 4 — Install SQL Server on both
+    queue.push({
+      type: 'parallel',
+      items: [
+        { label: `Job 6 — SQL Server "${n1}"`, fn: () => startJob6(n1) },
+        { label: `Job 6 — SQL Server "${n2}"`, fn: () => startJob6(n2) },
+      ],
+    });
+
+    // 5 — Create WSFC cluster + AG
+    queue.push({
+      type: 'single',
+      label: `Job 7 — Crea Cluster "${clusterName}" + AG "${agName}"`,
+      fn: () => startJob7({
+        node1Name: n1, node2Name: n2,
+        clusterName, clusterIp,
+        agName, listenerName, listenerIp,
+      }),
+    });
+
+    queueRef.current = queue;
+    await triggerNext();
+  }, [triggerNext]);
+
+  /* ---- Render ---- */
+
+  const switchTab = (id) => {
+    if (busy) return;
+    setActiveTab(id);
+    setError('');
+    setSteps([]);
+  };
 
   return (
     <div className="app">
       <h1>AutoDeploy</h1>
       <p className="subtitle">
-        Self-service Windows VM provisioning &amp; domain join
+        Self-service provisioning &amp; configuration
       </p>
+
+      <nav className="tab-bar">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`tab-item${activeTab === tab.id ? ' active' : ''}`}
+            onClick={() => switchTab(tab.id)}
+            disabled={busy}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
 
       {error && <div className="error-banner">{error}</div>}
 
-      <DeployForm onDeploy={handleDeploy} disabled={busy} />
+      {activeTab === 'vm' && (
+        <DeployForm onDeploy={handleDeploy} disabled={busy} />
+      )}
+      {activeTab === 'cluster' && (
+        <ClusterForm onDeploy={handleClusterDeploy} disabled={busy} />
+      )}
 
       <div className="status-section">
         {steps.map((step, i) => (

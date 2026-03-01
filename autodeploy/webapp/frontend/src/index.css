@@ -37,6 +37,51 @@ h1 {
   font-size: 0.95rem;
 }
 
+/* ---- Tab bar ---- */
+.tab-bar {
+  display: flex;
+  gap: 1.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+
+.tab-item {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  font-weight: 500;
+  padding: 0.5rem 0.25rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.tab-item:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.tab-item.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.tab-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---- Form row (side-by-side fields) ---- */
+.form-row {
+  display: flex;
+  gap: 1rem;
+}
+
+.form-row > .form-group {
+  flex: 1;
+}
+
 /* ---- Card ---- */
 .card {
   background: var(--surface);

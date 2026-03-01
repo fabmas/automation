@@ -1,0 +1,47 @@
+- defaultTab: nodes
+  description: "Installa Failover Clustering feature via Ansible."
+  executionEnabled: true
+  loglevel: INFO
+  name: "05 - Install Failover Clustering (Ansible)"
+  nodeFilterEditable: false
+  scheduleEnabled: false
+  sequence:
+    commands:
+      - script: |-
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export REPO_DIR="@option.repo_dir@"
+          export ANSIBLE_WORKDIR="@option.ansible_workdir@"
+          export ANSIBLE_INVENTORY="@option.ansible_inventory@"
+          export AZ_SUBSCRIPTION_ID="@option.az_subscription_id@"
+          export KEYVAULT_NAME="@option.keyvault_name@"
+          export LOCALADMIN_SECRET_NAME="@option.localadmin_secret_name@"
+
+          bash "@option.repo_dir@/autodeploy/rundeck/scripts/job5_install_fc.sh"
+    keepgoing: false
+    strategy: node-first
+  options:
+    - name: repo_dir
+      label: Repo directory
+      required: true
+      value: /opt/automation
+    - name: ansible_workdir
+      label: Ansible workdir
+      required: true
+      value: /opt/automation/autodeploy/ansible
+    - name: ansible_inventory
+      label: Inventory path
+      required: true
+      value: /opt/automation/autodeploy/ansible/inventory/terraform.yml
+    - name: az_subscription_id
+      label: Subscription ID
+      required: true
+      value: 9af59c0f-7661-48ec-ac0d-fc61688f01ea
+    - name: keyvault_name
+      label: Key Vault name
+      required: true
+      value: fabmas-kv1
+    - name: localadmin_secret_name
+      label: Local admin secret name
+      required: true
+      value: winproto01-localadmin

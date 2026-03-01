@@ -1,0 +1,37 @@
+---
+# install-failover-clustering.yml — Installa la feature Failover Clustering su Windows.
+#
+# Uso:
+#   ansible-playbook -i inventory/terraform.yml playbooks/install-failover-clustering.yml
+
+- name: Install Windows Failover Clustering
+  hosts: windows
+  gather_facts: false
+
+  tasks:
+    - name: Installa feature Failover-Clustering + RSAT tools
+      ansible.windows.win_feature:
+        name:
+          - Failover-Clustering
+          - RSAT-Clustering-Mgmt
+          - RSAT-Clustering-PowerShell
+        state: present
+        include_sub_features: true
+        include_management_tools: true
+      register: fc_result
+
+    - name: Reboot se richiesto dalla feature
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+      when: fc_result.reboot_required | default(false)
+
+    - name: Verifica che il servizio ClusSvc esista
+      ansible.windows.win_service_info:
+        name: ClusSvc
+      register: clussvc
+
+    - name: Mostra stato Failover Clustering
+      ansible.builtin.debug:
+        msg: >-
+          ClusSvc exists={{ clussvc.exists | default(false) }},
+          state={{ clussvc.services[0].state | default('N/A') if clussvc.services | default([]) | length > 0 else 'not installed' }}

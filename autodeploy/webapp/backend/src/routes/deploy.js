@@ -6,6 +6,9 @@ const JOB1_ID = process.env.JOB1_ID;
 const JOB2_ID = process.env.JOB2_ID;
 const JOB3_ID = process.env.JOB3_ID;
 const JOB4_ID = process.env.JOB4_ID;
+const JOB5_ID = process.env.JOB5_ID;
+const JOB6_ID = process.env.JOB6_ID;
+const JOB7_ID = process.env.JOB7_ID;
 
 /**
  * POST /api/deploy
@@ -134,6 +137,97 @@ router.post('/job4', async (req, res) => {
     });
   } catch (err) {
     console.error('[deploy/job4] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/deploy/job5
+ * Body: { vmName: "sqlnode01" }
+ *
+ * Triggers Job 5 (Ansible — Install Failover Clustering feature).
+ */
+router.post('/job5', async (req, res) => {
+  try {
+    const { vmName } = req.body;
+    const opts = {};
+    if (vmName) {
+      opts.localadmin_secret_name = `${vmName}-localadmin`;
+    }
+    const exec = await rundeck.runJob(JOB5_ID, opts);
+    res.json({
+      job5: {
+        executionId: exec.id,
+        href: exec.href,
+        status: exec.status,
+      },
+    });
+  } catch (err) {
+    console.error('[deploy/job5] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/deploy/job6
+ * Body: { vmName: "sqlnode01" }
+ *
+ * Triggers Job 6 (Ansible — Install SQL Server).
+ */
+router.post('/job6', async (req, res) => {
+  try {
+    const { vmName } = req.body;
+    const opts = {};
+    if (vmName) {
+      opts.localadmin_secret_name = `${vmName}-localadmin`;
+    }
+    const exec = await rundeck.runJob(JOB6_ID, opts);
+    res.json({
+      job6: {
+        executionId: exec.id,
+        href: exec.href,
+        status: exec.status,
+      },
+    });
+  } catch (err) {
+    console.error('[deploy/job6] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/deploy/job7
+ * Body: { node1Name, node2Name, clusterName, clusterIp, agName, listenerName, listenerIp }
+ *
+ * Triggers Job 7 (Ansible — Create WSFC Cluster + Configure SQL Always On AG).
+ */
+router.post('/job7', async (req, res) => {
+  try {
+    const {
+      node1Name, node2Name,
+      clusterName, clusterIp,
+      agName, listenerName, listenerIp,
+    } = req.body;
+    const opts = {
+      node1_name: node1Name,
+      node2_name: node2Name,
+      cluster_name: clusterName,
+      cluster_ip: clusterIp,
+      ag_name: agName,
+      listener_name: listenerName,
+      listener_ip: listenerIp,
+      localadmin_secret_name: `${node1Name}-localadmin`,
+    };
+    const exec = await rundeck.runJob(JOB7_ID, opts);
+    res.json({
+      job7: {
+        executionId: exec.id,
+        href: exec.href,
+        status: exec.status,
+      },
+    });
+  } catch (err) {
+    console.error('[deploy/job7] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
