@@ -157,6 +157,21 @@
                   Log "Cluster '{{ cluster_name }}' created"
               }
 
+              # Verify cluster IP is online
+              $clusterUp = Get-Cluster -Name "{{ cluster_name }}" -ErrorAction Stop
+              Log "Cluster '$($clusterUp.Name)' state OK"
+              $ipRes = Get-ClusterResource -Cluster "{{ cluster_name }}" | Where-Object { $_.ResourceType -eq 'IP Address' }
+              foreach ($ip in $ipRes) {
+                  $addr = ($ip | Get-ClusterParameter -Name 'Address').Value
+                  Log "Cluster IP resource: $($ip.Name) = $addr  State=$($ip.State)"
+              }
+              $nodes = Get-ClusterNode -Cluster "{{ cluster_name }}"
+              foreach ($n in $nodes) {
+                  Log "Cluster node: $($n.Name)  State=$($n.State)"
+                  if ($n.State -ne 'Up') { throw "Cluster node $($n.Name) is not Up ($($n.State))" }
+              }
+              Log "Phase 2: Cluster VERIFIED"
+
               # ---- Phase 3: Cloud Witness ----
               $saName = "{{ storage_account_name }}"
               $saKey  = "{{ storage_account_key }}"
@@ -171,41 +186,60 @@
 
               # ---- Phase 4: Enable SQL Always On ----
               Log "--- Phase 4: Enable SQL Always On ---"
-              if (-not (Get-Module -ListAvailable SqlServer -ErrorAction SilentlyContinue)) {
-                  Log "Installing SqlServer PS module..."
-                  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-                  Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction SilentlyContinue | Out-Null
-                  Install-Module SqlServer -Force -AllowClobber -Scope AllUsers -ErrorAction Stop
+
+              # Install SqlServer module on BOTH nodes
+              $installModuleBlock = {
+                  if (-not (Get-Module -ListAvailable SqlServer -ErrorAction SilentlyContinue)) {
+                      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                      Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction SilentlyContinue | Out-Null
+                      Install-Module SqlServer -Force -AllowClobber -Scope AllUsers -ErrorAction Stop
+                  }
+                  Import-Module SqlServer -ErrorAction Stop
               }
-              Import-Module SqlServer -ErrorAction Stop
-              Log "SqlServer module loaded"
 
-              Enable-SqlAlwaysOn -ServerInstance "{{ node1_fqdn }}" -Force -ErrorAction Stop
-              Log "AlwaysOn enabled on {{ node1_fqdn }}"
-              Enable-SqlAlwaysOn -ServerInstance "{{ node2_fqdn }}" -Force -ErrorAction Stop
-              Log "AlwaysOn enabled on {{ node2_fqdn }}"
+              # Node 1 — local
+              & $installModuleBlock
+              Log "SqlServer module loaded on {{ node1_name }} (local)"
 
-              # Restart SQL on both nodes
-              Log "Restarting MSSQLSERVER on {{ node1_name }}..."
-              Restart-Service -Name MSSQLSERVER -Force
-              Log "Restarting MSSQLSERVER on {{ node2_name }}..."
+              # Node 2 — remote
+              Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock $installModuleBlock -ErrorAction Stop
+              Log "SqlServer module loaded on {{ node2_name }} (remote)"
+
+              # Enable AlwaysOn LOCALLY on node1 ($env:COMPUTERNAME)
+              Log "Enabling AlwaysOn on {{ node1_name }} (local)..."
+              Enable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force -ErrorAction Stop
+              Log "AlwaysOn enabled + SQL restarted on {{ node1_name }}"
+
+              # Enable AlwaysOn LOCALLY on node2 via Invoke-Command
+              Log "Enabling AlwaysOn on {{ node2_name }} (remote Invoke-Command)..."
               Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock {
-                  Restart-Service -Name MSSQLSERVER -Force
-              }
+                  Import-Module SqlServer -ErrorAction Stop
+                  Enable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force -ErrorAction Stop
+              } -ErrorAction Stop
+              Log "AlwaysOn enabled + SQL restarted on {{ node2_name }}"
 
-              # Wait for SQL to come online
+              # Wait for SQL to come back online on both nodes
               foreach ($inst in @("{{ node1_fqdn }}", "{{ node2_fqdn }}")) {
                   Log "Waiting for SQL on $inst..."
-                  for ($retry = 1; $retry -le 24; $retry++) {
+                  for ($retry = 1; $retry -le 30; $retry++) {
                       Start-Sleep -Seconds 5
                       try {
                           Invoke-Sqlcmd -ServerInstance $inst -Query "SELECT 1" -ErrorAction Stop | Out-Null
                           Log "SQL $inst is ONLINE"
                           break
                       } catch {
-                          if ($retry -eq 24) { throw "SQL Server $inst not ready after 120 s" }
+                          if ($retry -eq 30) { throw "SQL Server $inst not ready after 150 s" }
                       }
                   }
+              }
+
+              # VALIDATE: AlwaysOn is actually enabled (IsHadrEnabled = 1)
+              foreach ($inst in @("{{ node1_fqdn }}", "{{ node2_fqdn }}")) {
+                  $hadr = (Invoke-Sqlcmd -ServerInstance $inst -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS V").V
+                  if ($hadr -ne 1) {
+                      throw "FATAL: AlwaysOn is NOT enabled on $inst (IsHadrEnabled=$hadr). Check SQL Configuration Manager."
+                  }
+                  Log "VERIFIED: AlwaysOn enabled on $inst (IsHadrEnabled=$hadr)"
               }
               Log "Phase 4: DONE"
 
