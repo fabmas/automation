@@ -243,7 +243,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <h1>AutoDeploy</h1>
+      <h1>My Portal Light</h1>
       <p className="subtitle">
         Self-service provisioning &amp; configuration
       </p>
