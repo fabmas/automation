@@ -21,7 +21,7 @@ LOCALADMIN_SECRET_NAME="${LOCALADMIN_SECRET_NAME:-winproto01-localadmin}"
 # Storage account che ospita la ISO di SQL Server
 STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-fabmastorageaccount01}"
 ISO_CONTAINER="${ISO_CONTAINER:-software}"
-ISO_BLOB="${ISO_BLOB:-SQLServer2022-x64-ENU.iso}"
+ISO_BLOB="${ISO_BLOB:-SQLServer2025-x64-ENU.iso}"
 
 echo "[job6] ansible_workdir=$ANSIBLE_WORKDIR"
 echo "[job6] inventory=$ANSIBLE_INVENTORY"

@@ -59,4 +59,4 @@
     - name: iso_blob
       label: ISO blob name
       required: true
-      value: SQLServer2022-x64-ENU.iso
+      value: SQLServer2025-x64-ENU.iso

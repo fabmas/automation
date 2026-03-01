@@ -1,5 +1,5 @@
 ---
-# install-sql-server.yml — Installa SQL Server (unattended) su Windows target.
+# install-sql-server.yml — Installa SQL Server 2025 Enterprise (unattended) su Windows target.
 #
 # NOTA: Richiede che l'ISO/media di SQL Server sia accessibile dal nodo.
 #       La variabile sql_iso_url punta alla risorsa scaricabile (storage blob, file share, ecc.)
