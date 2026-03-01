@@ -7,7 +7,6 @@ export default function ClusterForm({ onDeploy, disabled }) {
   const [clusterIp, setClusterIp] = useState('');
   const [agName, setAgName] = useState('');
   const [listenerName, setListenerName] = useState('');
-  const [listenerIp, setListenerIp] = useState('');
   const [error, setError] = useState('');
 
   const validateHost = (name) => /^[a-zA-Z0-9]{1,15}$/.test(name);
@@ -42,24 +41,20 @@ export default function ClusterForm({ onDeploy, disabled }) {
       return;
     }
     if (!listenerName.trim()) {
-      setError('Nome Listener è obbligatorio.');
-      return;
-    }
-    if (!validateIp(listenerIp)) {
-      setError('IP Listener non valido (es. 10.0.0.51).');
+      setError('Nome DNN Listener è obbligatorio.');
       return;
     }
 
     onDeploy({
       node1Name, node2Name,
       clusterName, clusterIp,
-      agName, listenerName, listenerIp,
+      agName, listenerName,
     });
   };
 
   const canSubmit =
     node1Name && node2Name && clusterName && clusterIp &&
-    agName && listenerName && listenerIp;
+    agName && listenerName;
 
   return (
     <form onSubmit={handleSubmit} className="card">
@@ -121,25 +116,15 @@ export default function ClusterForm({ onDeploy, disabled }) {
         />
       </div>
 
-      <div className="form-row">
-        <div className="form-group">
-          <label htmlFor="listenerName">Nome Listener</label>
-          <input
-            id="listenerName" type="text" value={listenerName}
-            onChange={(e) => setListenerName(e.target.value)}
-            placeholder="es. SQLAG-LSN"
-            disabled={disabled} autoComplete="off"
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="listenerIp">IP Listener</label>
-          <input
-            id="listenerIp" type="text" value={listenerIp}
-            onChange={(e) => setListenerIp(e.target.value)}
-            placeholder="es. 10.0.0.51"
-            disabled={disabled} autoComplete="off"
-          />
-        </div>
+      <div className="form-group">
+        <label htmlFor="listenerName">Nome DNN Listener</label>
+        <input
+          id="listenerName" type="text" value={listenerName}
+          onChange={(e) => setListenerName(e.target.value)}
+          placeholder="es. SQLAG-LSN"
+          disabled={disabled} autoComplete="off"
+        />
+        <p className="hint">DNN (Distributed Network Name) — no Load Balancer. Connessione: Server=SQLAG-LSN,1433;MultiSubnetFailover=True</p>
       </div>
 
       {error && <div className="error-banner">{error}</div>}

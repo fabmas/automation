@@ -100,11 +100,11 @@ export async function startJob6(vmName) {
   return { executionId: data.job6.executionId };
 }
 
-export async function startJob7({ node1Name, node2Name, clusterName, clusterIp, agName, listenerName, listenerIp }) {
+export async function startJob7({ node1Name, node2Name, clusterName, clusterIp, agName, listenerName }) {
   const res = await fetch(`${API_BASE}/deploy/job7`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ node1Name, node2Name, clusterName, clusterIp, agName, listenerName, listenerIp }),
+    body: JSON.stringify({ node1Name, node2Name, clusterName, clusterIp, agName, listenerName }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

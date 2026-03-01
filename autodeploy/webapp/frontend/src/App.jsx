@@ -156,7 +156,7 @@ export default function App() {
 
   const handleClusterDeploy = useCallback(async ({
     node1Name, node2Name, clusterName, clusterIp,
-    agName, listenerName, listenerIp,
+    agName, listenerName,
   }) => {
     setBusy(true);
     setError('');
@@ -209,7 +209,7 @@ export default function App() {
       fn: () => startJob7({
         node1Name: n1, node2Name: n2,
         clusterName, clusterIp,
-        agName, listenerName, listenerIp,
+        agName, listenerName,
       }),
     });
 

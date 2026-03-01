@@ -27,11 +27,10 @@ CLUSTER_NAME="${CLUSTER_NAME:?CLUSTER_NAME is required}"
 CLUSTER_IP="${CLUSTER_IP:?CLUSTER_IP is required}"
 AG_NAME="${AG_NAME:?AG_NAME is required}"
 LISTENER_NAME="${LISTENER_NAME:?LISTENER_NAME is required}"
-LISTENER_IP="${LISTENER_IP:?LISTENER_IP is required}"
 
 echo "[job7] node1=$NODE1_NAME  node2=$NODE2_NAME"
 echo "[job7] cluster=$CLUSTER_NAME ($CLUSTER_IP)"
-echo "[job7] ag=$AG_NAME  listener=$LISTENER_NAME ($LISTENER_IP)"
+echo "[job7] ag=$AG_NAME  listener(DNN)=$LISTENER_NAME"
 echo "[job7] cloud witness storage=$STORAGE_ACCOUNT"
 
 az login --identity --output none || true
@@ -90,7 +89,6 @@ ansible-playbook -i "$INVENTORY_RUNTIME" playbooks/create-cluster.yml \
   -e "cluster_ip=$CLUSTER_IP" \
   -e "ag_name=$AG_NAME" \
   -e "listener_name=$LISTENER_NAME" \
-  -e "listener_ip=$LISTENER_IP" \
   -e "storage_account_name=$STORAGE_ACCOUNT" \
   -e "storage_account_key=$STORAGE_KEY" \
   -v

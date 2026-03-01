@@ -200,16 +200,16 @@ router.post('/job6', async (req, res) => {
 
 /**
  * POST /api/deploy/job7
- * Body: { node1Name, node2Name, clusterName, clusterIp, agName, listenerName, listenerIp }
+ * Body: { node1Name, node2Name, clusterName, clusterIp, agName, listenerName }
  *
- * Triggers Job 7 (Ansible — Create WSFC Cluster + Configure SQL Always On AG).
+ * Triggers Job 7 (Ansible — Create WSFC Cluster + Configure SQL Always On AG + DNN Listener).
  */
 router.post('/job7', async (req, res) => {
   try {
     const {
       node1Name, node2Name,
       clusterName, clusterIp,
-      agName, listenerName, listenerIp,
+      agName, listenerName,
     } = req.body;
     const opts = {
       node1_name: node1Name,
@@ -218,7 +218,6 @@ router.post('/job7', async (req, res) => {
       cluster_ip: clusterIp,
       ag_name: agName,
       listener_name: listenerName,
-      listener_ip: listenerIp,
       localadmin_secret_name: `${node1Name}-localadmin`,
     };
     const exec = await rundeck.runJob(JOB7_ID, opts);

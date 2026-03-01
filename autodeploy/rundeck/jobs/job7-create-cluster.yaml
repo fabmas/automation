@@ -23,7 +23,6 @@
           export CLUSTER_IP="@option.cluster_ip@"
           export AG_NAME="@option.ag_name@"
           export LISTENER_NAME="@option.listener_name@"
-          export LISTENER_IP="@option.listener_ip@"
 
           bash "@option.repo_dir@/autodeploy/rundeck/scripts/job7_create_cluster.sh"
     keepgoing: false
@@ -73,8 +72,5 @@
       label: AG name
       required: true
     - name: listener_name
-      label: Listener name
-      required: true
-    - name: listener_ip
-      label: Listener IP
+      label: DNN Listener name
       required: true

@@ -8,10 +8,12 @@
 #   node1_name:     Hostname del primo nodo
 #   node2_name:     Hostname del secondo nodo
 #   ag_name:        Nome dell'Availability Group (es. AG-SQL01)
-#   listener_name:  Nome del listener AG (es. SQLAG-LSN)
-#   listener_ip:    IP statico del listener (es. 10.0.0.51)
+#   listener_name:  Nome del DNN Listener AG (es. SQLAG-LSN)
 #   storage_account_name: Nome storage account per Cloud Witness (es. fabmastorageaccount01)
 #   storage_account_key:  Access key dello storage account (passata dal job Rundeck)
+#
+# NOTA: Usa DNN (Distributed Network Name) Listener — non richiede Azure Load Balancer.
+#       I client devono connettersi con MultiSubnetFailover=True nella connection string.
 #
 # NOTA: Questo playbook viene eseguito sul nodo 1 che orchestrerà la creazione
 #       del cluster e la configurazione dell'AG.
@@ -31,7 +33,6 @@
     node2_name: ""
     ag_name: ""
     listener_name: ""
-    listener_ip: ""
     listener_port: "1433"
     storage_account_name: ""
     storage_account_key: ""
@@ -182,27 +183,33 @@
           Write-Output "{{ node2_fqdn }} joined AG '{{ ag_name }}'"
       register: ag_join
 
-    # ---- 5. Crea Listener ----
-    - name: Crea Availability Group Listener
+    # ---- 5. Crea DNN Listener (no Load Balancer) ----
+    - name: Crea DNN Listener per Availability Group
       ansible.windows.win_powershell:
         script: |
           Import-Module SqlServer -ErrorAction Stop
 
-          $listener = Get-ChildItem "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups\{{ ag_name }}\AvailabilityGroupListeners" -ErrorAction SilentlyContinue |
-                      Where-Object { $_.Name -eq "{{ listener_name }}" }
-          if ($listener) {
-              Write-Output "Listener '{{ listener_name }}' already exists"
+          # Verifica se il DNN listener esiste già
+          $dnn = Get-ChildItem "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups\{{ ag_name }}\AvailabilityGroupListeners" -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Name -eq "{{ listener_name }}" }
+          if ($dnn) {
+              Write-Output "DNN Listener '{{ listener_name }}' already exists"
               exit 0
           }
 
-          New-SqlAvailabilityGroupListener `
-              -Name "{{ listener_name }}" `
-              -StaticIp "{{ listener_ip }}/255.255.255.0" `
-              -Port {{ listener_port }} `
-              -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups\{{ ag_name }}" `
-              -ErrorAction Stop
+          # Crea DNN Listener — usa DNS distribuito, non richiede ILB né IP statico
+          $agPath = "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups\{{ ag_name }}"
+          Invoke-Sqlcmd -ServerInstance "{{ node1_fqdn }}" -Query @"
+          ALTER AVAILABILITY GROUP [{{ ag_name }}]
+            ADD LISTENER N'{{ listener_name }}' (
+              WITH DISTRIBUTED_NETWORK_NAME,
+              WITH IP (NONE),
+              PORT = {{ listener_port }}
+            );
+          "@
 
-          Write-Output "Listener '{{ listener_name }}' created at {{ listener_ip }}:{{ listener_port }}"
+          Write-Output "DNN Listener '{{ listener_name }}' created on port {{ listener_port }}"
+          Write-Output "Connection string: Server={{ listener_name }},{{ listener_port }};MultiSubnetFailover=True"
       register: listener_create
 
     # ---- 6. Riepilogo ----
@@ -214,4 +221,5 @@
           Nodes:         {{ node1_fqdn }}, {{ node2_fqdn }}
           Cloud Witness: {{ storage_account_name | default('N/A') }}
           AG:            {{ ag_name }}
-          Listener:      {{ listener_name }} ({{ listener_ip }}:{{ listener_port }})
+          DNN Listener:  {{ listener_name }} (port {{ listener_port }})
+          Connection:    Server={{ listener_name }},{{ listener_port }};MultiSubnetFailover=True
