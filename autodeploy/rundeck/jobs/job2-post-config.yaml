@@ -4,6 +4,8 @@
   loglevel: INFO
   name: "02 - Post-Config (Ansible)"
   nodeFilterEditable: false
+  retry: '2'
+  retryDelay: '60s'
   scheduleEnabled: false
   sequence:
     commands:

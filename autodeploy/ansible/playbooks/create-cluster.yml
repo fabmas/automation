@@ -103,8 +103,11 @@
           Start-Transcript -Path "C:\Windows\Temp\ClusterSetup\transcript.log" -Force
 
           $ErrorActionPreference = 'Stop'
-          $logFile  = "C:\Windows\Temp\ClusterSetup\cluster_setup.log"
-          $exitFile = "C:\Windows\Temp\ClusterSetup\exitcode.txt"
+          $workDir        = "C:\Windows\Temp\ClusterSetup"
+          $logFile        = "$workDir\cluster_setup.log"
+          $exitFile       = "$workDir\exitcode.txt"
+          $checkpointFile = "$workDir\checkpoint.txt"
+          $resumeTaskName = "AnsibleClusterSetup_Resume"
 
           function Log { param([string]$msg)
             $ts = Get-Date -Format 'HH:mm:ss'
@@ -113,212 +116,280 @@
             Write-Host $line
           }
 
+          function Set-Checkpoint { param([int]$phase)
+            "$phase" | Set-Content -Path $checkpointFile -Encoding ASCII -Force
+            Log "CHECKPOINT: phase $phase saved"
+          }
+
+          function Get-Checkpoint {
+            if (Test-Path $checkpointFile) {
+                $val = (Get-Content $checkpointFile -Raw).Trim()
+                if ($val -match '^\d+$') { return [int]$val }
+            }
+            return 0
+          }
+
           try {
+              $resumePhase = Get-Checkpoint
               Log "=== Cluster + AG Setup ==="
               Log "Running as: $env:USERDOMAIN\$env:USERNAME"
               Log "Logon type test: whoami=$(whoami)"
               Log "Node1: {{ node1_fqdn }}  Node2: {{ node2_fqdn }}"
               Log "Cluster: {{ cluster_name }} ({{ cluster_ip }})"
               Log "AG: {{ ag_name }}   Listener(DNN): {{ listener_name }}"
+              if ($resumePhase -gt 0) {
+                  Log "*** RESUMING from checkpoint: phase $resumePhase completed ***"
+              }
 
               # ---- Phase 0: Prerequisites ----
-              Log "--- Phase 0: Prerequisites ---"
-              Log "Testing PSRemoting to {{ node2_fqdn }}..."
-              $r = Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock { hostname }
-              Log "PSRemoting OK -- {{ node2_fqdn }} returned: $r"
+              if ($resumePhase -lt 1) {
+                  Log "--- Phase 0: Prerequisites ---"
+                  Log "Testing PSRemoting to {{ node2_fqdn }}..."
+                  $r = Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock { hostname }
+                  Log "PSRemoting OK -- {{ node2_fqdn }} returned: $r"
 
-              # Open firewall ports on both nodes
-              foreach ($port in @(1433, 5022)) {
-                  $ruleName = "SQL-$port"
-                  New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -LocalPort $port -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-                  Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock {
-                      param($n,$p)
-                      New-NetFirewallRule -DisplayName $n -Direction Inbound -LocalPort $p -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-                  } -ArgumentList $ruleName, $port
-              }
-              Log "Firewall rules (1433, 5022) OK on both nodes"
+                  # Open firewall ports on both nodes
+                  foreach ($port in @(1433, 5022)) {
+                      $ruleName = "SQL-$port"
+                      New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -LocalPort $port -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+                      Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock {
+                          param($n,$p)
+                          New-NetFirewallRule -DisplayName $n -Direction Inbound -LocalPort $p -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+                      } -ArgumentList $ruleName, $port
+                  }
+                  Log "Firewall rules (1433, 5022) OK on both nodes"
+                  Set-Checkpoint 0
+              } else { Log "--- Phase 0: SKIPPED (checkpoint) ---" }
 
               # ---- Phase 1: Cluster Validation ----
-              Log "--- Phase 1: Cluster Validation ---"
-              Test-Cluster -Node "{{ node1_fqdn }}", "{{ node2_fqdn }}" -Include "Storage","Network","Inventory","Configuration" -ErrorAction Stop | Out-Null
-              Log "Phase 1: PASSED"
+              if ($resumePhase -lt 2) {
+                  Log "--- Phase 1: Cluster Validation ---"
+                  Test-Cluster -Node "{{ node1_fqdn }}", "{{ node2_fqdn }}" -Include "Storage","Network","Inventory","Configuration" -ErrorAction Stop | Out-Null
+                  Log "Phase 1: PASSED"
+                  Set-Checkpoint 1
+              } else { Log "--- Phase 1: SKIPPED (checkpoint) ---" }
 
               # ---- Phase 2: Create WSFC Cluster ----
-              Log "--- Phase 2: Create WSFC Cluster ---"
-              $clusterObj = $null
-              try { $clusterObj = Get-Cluster -Name "{{ cluster_name }}" -ErrorAction Stop } catch {}
-              if ($clusterObj) {
-                  Log "Cluster '{{ cluster_name }}' already exists -- skip"
-              } else {
-                  New-Cluster -Name "{{ cluster_name }}" `
-                      -Node "{{ node1_fqdn }}", "{{ node2_fqdn }}" `
-                      -StaticAddress "{{ cluster_ip }}" `
-                      -NoStorage -ErrorAction Stop
-                  Log "Cluster '{{ cluster_name }}' created"
-              }
+              if ($resumePhase -lt 3) {
+                  Log "--- Phase 2: Create WSFC Cluster ---"
+                  $clusterObj = $null
+                  try { $clusterObj = Get-Cluster -Name "{{ cluster_name }}" -ErrorAction Stop } catch {}
+                  if ($clusterObj) {
+                      Log "Cluster '{{ cluster_name }}' already exists -- skip"
+                  } else {
+                      New-Cluster -Name "{{ cluster_name }}" `
+                          -Node "{{ node1_fqdn }}", "{{ node2_fqdn }}" `
+                          -StaticAddress "{{ cluster_ip }}" `
+                          -NoStorage -ErrorAction Stop
+                      Log "Cluster '{{ cluster_name }}' created"
+                  }
 
-              # Verify cluster IP is online
-              $clusterUp = Get-Cluster -Name "{{ cluster_name }}" -ErrorAction Stop
-              Log "Cluster '$($clusterUp.Name)' state OK"
-              $ipRes = Get-ClusterResource -Cluster "{{ cluster_name }}" | Where-Object { $_.ResourceType -eq 'IP Address' }
-              foreach ($ip in $ipRes) {
-                  $addr = ($ip | Get-ClusterParameter -Name 'Address').Value
-                  Log "Cluster IP resource: $($ip.Name) = $addr  State=$($ip.State)"
-              }
-              $nodes = Get-ClusterNode -Cluster "{{ cluster_name }}"
-              foreach ($n in $nodes) {
-                  Log "Cluster node: $($n.Name)  State=$($n.State)"
-                  if ($n.State -ne 'Up') { throw "Cluster node $($n.Name) is not Up ($($n.State))" }
-              }
-              Log "Phase 2: Cluster VERIFIED"
+                  # Verify cluster IP is online
+                  $clusterUp = Get-Cluster -Name "{{ cluster_name }}" -ErrorAction Stop
+                  Log "Cluster '$($clusterUp.Name)' state OK"
+                  $ipRes = Get-ClusterResource -Cluster "{{ cluster_name }}" | Where-Object { $_.ResourceType -eq 'IP Address' }
+                  foreach ($ip in $ipRes) {
+                      $addr = ($ip | Get-ClusterParameter -Name 'Address').Value
+                      Log "Cluster IP resource: $($ip.Name) = $addr  State=$($ip.State)"
+                  }
+                  $nodes = Get-ClusterNode -Cluster "{{ cluster_name }}"
+                  foreach ($n in $nodes) {
+                      Log "Cluster node: $($n.Name)  State=$($n.State)"
+                      if ($n.State -ne 'Up') { throw "Cluster node $($n.Name) is not Up ($($n.State))" }
+                  }
+                  Log "Phase 2: Cluster VERIFIED"
+                  Set-Checkpoint 2
+              } else { Log "--- Phase 2: SKIPPED (checkpoint) ---" }
 
               # ---- Phase 3: Cloud Witness ----
-              $saName = "{{ storage_account_name }}"
-              $saKey  = "{{ storage_account_key }}"
-              if ($saName -and $saKey) {
-                  Log "--- Phase 3: Cloud Witness ---"
-                  Set-ClusterQuorum -Cluster "{{ cluster_name }}" `
-                      -CloudWitness -AccountName $saName -AccessKey $saKey -ErrorAction Stop
-                  Log "Cloud Witness configured ($saName)"
-              } else {
-                  Log "--- Phase 3: Cloud Witness --- SKIPPED"
-              }
+              if ($resumePhase -lt 4) {
+                  $saName = "{{ storage_account_name }}"
+                  $saKey  = "{{ storage_account_key }}"
+                  if ($saName -and $saKey) {
+                      Log "--- Phase 3: Cloud Witness ---"
+                      # Check if Cloud Witness is already configured
+                      $currentQuorum = Get-ClusterQuorum -Cluster "{{ cluster_name }}" -ErrorAction SilentlyContinue
+                      if ($currentQuorum.QuorumResource -and $currentQuorum.QuorumResource.ResourceType.Name -eq 'Cloud Witness') {
+                          Log "Cloud Witness already configured -- skip"
+                      } else {
+                          Set-ClusterQuorum -Cluster "{{ cluster_name }}" `
+                              -CloudWitness -AccountName $saName -AccessKey $saKey -ErrorAction Stop
+                          Log "Cloud Witness configured ($saName)"
+                      }
+                  } else {
+                      Log "--- Phase 3: Cloud Witness --- SKIPPED (no storage account)"
+                  }
+                  Set-Checkpoint 3
+              } else { Log "--- Phase 3: SKIPPED (checkpoint) ---" }
 
               # ---- Phase 4: Enable SQL Always On ----
-              Log "--- Phase 4: Enable SQL Always On ---"
+              if ($resumePhase -lt 5) {
+                  Log "--- Phase 4: Enable SQL Always On ---"
 
-              # Install SqlServer module on BOTH nodes
-              $installModuleBlock = {
-                  if (-not (Get-Module -ListAvailable SqlServer -ErrorAction SilentlyContinue)) {
-                      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-                      Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction SilentlyContinue | Out-Null
-                      Install-Module SqlServer -Force -AllowClobber -Scope AllUsers -ErrorAction Stop
+                  # Install SqlServer module on BOTH nodes
+                  $installModuleBlock = {
+                      if (-not (Get-Module -ListAvailable SqlServer -ErrorAction SilentlyContinue)) {
+                          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                          Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction SilentlyContinue | Out-Null
+                          Install-Module SqlServer -Force -AllowClobber -Scope AllUsers -ErrorAction Stop
+                      }
+                      Import-Module SqlServer -ErrorAction Stop
                   }
-                  Import-Module SqlServer -ErrorAction Stop
-              }
 
-              # Node 1 — local
-              & $installModuleBlock
-              Log "SqlServer module loaded on {{ node1_name }} (local)"
+                  # Node 1 — local
+                  & $installModuleBlock
+                  Log "SqlServer module loaded on {{ node1_name }} (local)"
 
-              # Node 2 — remote
-              Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock $installModuleBlock -ErrorAction Stop
-              Log "SqlServer module loaded on {{ node2_name }} (remote)"
+                  # Node 2 — remote
+                  Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock $installModuleBlock -ErrorAction Stop
+                  Log "SqlServer module loaded on {{ node2_name }} (remote)"
 
-              # Enable AlwaysOn LOCALLY on node1 ($env:COMPUTERNAME)
-              Log "Enabling AlwaysOn on {{ node1_name }} (local)..."
-              Enable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force -ErrorAction Stop
-              Log "AlwaysOn enabled + SQL restarted on {{ node1_name }}"
+                  # Check if AlwaysOn already enabled before attempting (idempotent)
+                  $hadr1 = $null
+                  try { $hadr1 = (Invoke-Sqlcmd -ServerInstance "{{ node1_fqdn }}" -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS V" -ErrorAction Stop).V } catch {}
+                  $hadr2 = $null
+                  try { $hadr2 = (Invoke-Sqlcmd -ServerInstance "{{ node2_fqdn }}" -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS V" -ErrorAction Stop).V } catch {}
 
-              # Enable AlwaysOn LOCALLY on node2 via Invoke-Command
-              Log "Enabling AlwaysOn on {{ node2_name }} (remote Invoke-Command)..."
-              Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock {
-                  Import-Module SqlServer -ErrorAction Stop
-                  Enable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force -ErrorAction Stop
-              } -ErrorAction Stop
-              Log "AlwaysOn enabled + SQL restarted on {{ node2_name }}"
+                  if ($hadr1 -ne 1) {
+                      Log "Enabling AlwaysOn on {{ node1_name }} (local)..."
+                      Enable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force -ErrorAction Stop
+                      Log "AlwaysOn enabled + SQL restarted on {{ node1_name }}"
+                  } else {
+                      Log "AlwaysOn already enabled on {{ node1_name }} -- skip"
+                  }
 
-              # Wait for SQL to come back online on both nodes
-              foreach ($inst in @("{{ node1_fqdn }}", "{{ node2_fqdn }}")) {
-                  Log "Waiting for SQL on $inst..."
-                  for ($retry = 1; $retry -le 30; $retry++) {
-                      Start-Sleep -Seconds 5
-                      try {
-                          Invoke-Sqlcmd -ServerInstance $inst -Query "SELECT 1" -ErrorAction Stop | Out-Null
-                          Log "SQL $inst is ONLINE"
-                          break
-                      } catch {
-                          if ($retry -eq 30) { throw "SQL Server $inst not ready after 150 s" }
+                  if ($hadr2 -ne 1) {
+                      Log "Enabling AlwaysOn on {{ node2_name }} (remote Invoke-Command)..."
+                      Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock {
+                          Import-Module SqlServer -ErrorAction Stop
+                          Enable-SqlAlwaysOn -ServerInstance $env:COMPUTERNAME -Force -ErrorAction Stop
+                      } -ErrorAction Stop
+                      Log "AlwaysOn enabled + SQL restarted on {{ node2_name }}"
+                  } else {
+                      Log "AlwaysOn already enabled on {{ node2_name }} -- skip"
+                  }
+
+                  # Wait for SQL to come back online on both nodes
+                  foreach ($inst in @("{{ node1_fqdn }}", "{{ node2_fqdn }}")) {
+                      Log "Waiting for SQL on $inst..."
+                      for ($retry = 1; $retry -le 30; $retry++) {
+                          Start-Sleep -Seconds 5
+                          try {
+                              Invoke-Sqlcmd -ServerInstance $inst -Query "SELECT 1" -ErrorAction Stop | Out-Null
+                              Log "SQL $inst is ONLINE"
+                              break
+                          } catch {
+                              if ($retry -eq 30) { throw "SQL Server $inst not ready after 150 s" }
+                          }
                       }
                   }
-              }
 
-              # VALIDATE: AlwaysOn is actually enabled (IsHadrEnabled = 1)
-              foreach ($inst in @("{{ node1_fqdn }}", "{{ node2_fqdn }}")) {
-                  $hadr = (Invoke-Sqlcmd -ServerInstance $inst -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS V").V
-                  if ($hadr -ne 1) {
-                      throw "FATAL: AlwaysOn is NOT enabled on $inst (IsHadrEnabled=$hadr). Check SQL Configuration Manager."
+                  # VALIDATE: AlwaysOn is actually enabled (IsHadrEnabled = 1)
+                  foreach ($inst in @("{{ node1_fqdn }}", "{{ node2_fqdn }}")) {
+                      $hadr = (Invoke-Sqlcmd -ServerInstance $inst -Query "SELECT SERVERPROPERTY('IsHadrEnabled') AS V").V
+                      if ($hadr -ne 1) {
+                          throw "FATAL: AlwaysOn is NOT enabled on $inst (IsHadrEnabled=$hadr). Check SQL Configuration Manager."
+                      }
+                      Log "VERIFIED: AlwaysOn enabled on $inst (IsHadrEnabled=$hadr)"
                   }
-                  Log "VERIFIED: AlwaysOn enabled on $inst (IsHadrEnabled=$hadr)"
-              }
-              Log "Phase 4: DONE"
+                  Log "Phase 4: DONE"
+                  Set-Checkpoint 4
+              } else { Log "--- Phase 4: SKIPPED (checkpoint) ---" }
 
               # ---- Phase 5: Availability Group ----
-              Log "--- Phase 5: Availability Group ---"
-              $existingAg = $null
-              try {
-                  $existingAg = Get-ChildItem "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups" `
-                      -ErrorAction Stop | Where-Object { $_.Name -eq "{{ ag_name }}" }
-              } catch {}
+              if ($resumePhase -lt 6) {
+                  Log "--- Phase 5: Availability Group ---"
+                  # Ensure SqlServer module is loaded (needed after resume)
+                  Import-Module SqlServer -ErrorAction Stop
 
-              if ($existingAg) {
-                  Log "AG '{{ ag_name }}' already exists -- skip"
-              } else {
-                  # Hadr endpoint -- node 1
+                  $existingAg = $null
                   try {
-                      $ep1 = New-SqlHadrEndpoint -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT" `
-                          -Name "Hadr_endpoint" -Port 5022 -ErrorAction Stop
-                      Set-SqlHadrEndpoint -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\Endpoints\Hadr_endpoint" -State Started
-                  } catch { Log "Hadr_endpoint node1: $($_.Exception.Message) (may exist)" }
-                  Log "Hadr_endpoint {{ node1_fqdn }} OK"
+                      $existingAg = Get-ChildItem "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups" `
+                          -ErrorAction Stop | Where-Object { $_.Name -eq "{{ ag_name }}" }
+                  } catch {}
 
-                  # Hadr endpoint -- node 2
-                  $ep2Q = "IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name='Hadr_endpoint') " +
-                          "CREATE ENDPOINT Hadr_endpoint STATE=STARTED AS TCP(LISTENER_PORT=5022) " +
-                          "FOR DATABASE_MIRRORING(ROLE=ALL, AUTHENTICATION=WINDOWS NEGOTIATE, ENCRYPTION=REQUIRED ALGORITHM AES)"
-                  Invoke-Sqlcmd -ServerInstance "{{ node2_fqdn }}" -Query $ep2Q
-                  Log "Hadr_endpoint {{ node2_fqdn }} OK"
+                  if ($existingAg) {
+                      Log "AG '{{ ag_name }}' already exists -- skip"
+                  } else {
+                      # Hadr endpoint -- node 1
+                      try {
+                          $ep1 = New-SqlHadrEndpoint -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT" `
+                              -Name "Hadr_endpoint" -Port 5022 -ErrorAction Stop
+                          Set-SqlHadrEndpoint -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\Endpoints\Hadr_endpoint" -State Started
+                      } catch { Log "Hadr_endpoint node1: $($_.Exception.Message) (may exist)" }
+                      Log "Hadr_endpoint {{ node1_fqdn }} OK"
 
-                  # SQL major version (auto-detect)
-                  $sqlVer = [int](Invoke-Sqlcmd -ServerInstance "{{ node1_fqdn }}" `
-                      -Query "SELECT CAST(SERVERPROPERTY('ProductMajorVersion') AS INT) AS V").V
-                  Log "SQL major version: $sqlVer"
+                      # Hadr endpoint -- node 2
+                      $ep2Q = "IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name='Hadr_endpoint') " +
+                              "CREATE ENDPOINT Hadr_endpoint STATE=STARTED AS TCP(LISTENER_PORT=5022) " +
+                              "FOR DATABASE_MIRRORING(ROLE=ALL, AUTHENTICATION=WINDOWS NEGOTIATE, ENCRYPTION=REQUIRED ALGORITHM AES)"
+                      Invoke-Sqlcmd -ServerInstance "{{ node2_fqdn }}" -Query $ep2Q
+                      Log "Hadr_endpoint {{ node2_fqdn }} OK"
 
-                  $primary = New-SqlAvailabilityReplica -Name "{{ node1_fqdn }}" `
-                      -EndpointUrl "TCP://{{ node1_fqdn }}:5022" `
-                      -AvailabilityMode SynchronousCommit -FailoverMode Automatic `
-                      -AsTemplate -Version $sqlVer
-                  $secondary = New-SqlAvailabilityReplica -Name "{{ node2_fqdn }}" `
-                      -EndpointUrl "TCP://{{ node2_fqdn }}:5022" `
-                      -AvailabilityMode SynchronousCommit -FailoverMode Automatic `
-                      -AsTemplate -Version $sqlVer
+                      # SQL major version (auto-detect)
+                      $sqlVer = [int](Invoke-Sqlcmd -ServerInstance "{{ node1_fqdn }}" `
+                          -Query "SELECT CAST(SERVERPROPERTY('ProductMajorVersion') AS INT) AS V").V
+                      Log "SQL major version: $sqlVer"
 
-                  New-SqlAvailabilityGroup -Name "{{ ag_name }}" `
-                      -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT" `
-                      -AvailabilityReplica @($primary, $secondary) -ErrorAction Stop
-                  Log "AG '{{ ag_name }}' created"
+                      $primary = New-SqlAvailabilityReplica -Name "{{ node1_fqdn }}" `
+                          -EndpointUrl "TCP://{{ node1_fqdn }}:5022" `
+                          -AvailabilityMode SynchronousCommit -FailoverMode Automatic `
+                          -AsTemplate -Version $sqlVer
+                      $secondary = New-SqlAvailabilityReplica -Name "{{ node2_fqdn }}" `
+                          -EndpointUrl "TCP://{{ node2_fqdn }}:5022" `
+                          -AvailabilityMode SynchronousCommit -FailoverMode Automatic `
+                          -AsTemplate -Version $sqlVer
 
-                  # Join node 2
-                  Join-SqlAvailabilityGroup -Path "SQLSERVER:\SQL\{{ node2_fqdn }}\DEFAULT" `
-                      -Name "{{ ag_name }}" -ErrorAction Stop
-                  Log "{{ node2_fqdn }} joined AG"
-              }
-              Log "Phase 5: DONE"
+                      New-SqlAvailabilityGroup -Name "{{ ag_name }}" `
+                          -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT" `
+                          -AvailabilityReplica @($primary, $secondary) -ErrorAction Stop
+                      Log "AG '{{ ag_name }}' created"
+
+                      # Join node 2
+                      Join-SqlAvailabilityGroup -Path "SQLSERVER:\SQL\{{ node2_fqdn }}\DEFAULT" `
+                          -Name "{{ ag_name }}" -ErrorAction Stop
+                      Log "{{ node2_fqdn }} joined AG"
+                  }
+                  Log "Phase 5: DONE"
+                  Set-Checkpoint 5
+              } else { Log "--- Phase 5: SKIPPED (checkpoint) ---" }
 
               # ---- Phase 6: DNN Listener ----
-              Log "--- Phase 6: DNN Listener ---"
-              $existingLsn = $null
-              try {
-                  $existingLsn = Get-ChildItem "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups\{{ ag_name }}\AvailabilityGroupListeners" `
-                      -ErrorAction Stop | Where-Object { $_.Name -eq "{{ listener_name }}" }
-              } catch {}
+              if ($resumePhase -lt 7) {
+                  Log "--- Phase 6: DNN Listener ---"
+                  Import-Module SqlServer -ErrorAction Stop
 
-              if ($existingLsn) {
-                  Log "DNN Listener '{{ listener_name }}' already exists -- skip"
-              } else {
-                  $lsnQ = "ALTER AVAILABILITY GROUP [{{ ag_name }}] ADD LISTENER N'{{ listener_name }}' " +
-                          "(WITH DISTRIBUTED_NETWORK_NAME, WITH IP (NONE), PORT = {{ listener_port }})"
-                  Invoke-Sqlcmd -ServerInstance "{{ node1_fqdn }}" -Query $lsnQ
-                  Log "DNN Listener '{{ listener_name }}' port {{ listener_port }}"
-              }
-              Log "Phase 6: DONE"
+                  $existingLsn = $null
+                  try {
+                      $existingLsn = Get-ChildItem "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT\AvailabilityGroups\{{ ag_name }}\AvailabilityGroupListeners" `
+                          -ErrorAction Stop | Where-Object { $_.Name -eq "{{ listener_name }}" }
+                  } catch {}
+
+                  if ($existingLsn) {
+                      Log "DNN Listener '{{ listener_name }}' already exists -- skip"
+                  } else {
+                      $lsnQ = "ALTER AVAILABILITY GROUP [{{ ag_name }}] ADD LISTENER N'{{ listener_name }}' " +
+                              "(WITH DISTRIBUTED_NETWORK_NAME, WITH IP (NONE), PORT = {{ listener_port }})"
+                      Invoke-Sqlcmd -ServerInstance "{{ node1_fqdn }}" -Query $lsnQ
+                      Log "DNN Listener '{{ listener_name }}' port {{ listener_port }}"
+                  }
+                  Log "Phase 6: DONE"
+                  Set-Checkpoint 6
+              } else { Log "--- Phase 6: SKIPPED (checkpoint) ---" }
 
               Log "=== ALL PHASES COMPLETED ==="
+
+              # Cleanup: remove checkpoint and AtStartup task (no longer needed)
+              Remove-Item $checkpointFile -Force -ErrorAction SilentlyContinue
+              Unregister-ScheduledTask -TaskName $resumeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+              Log "Checkpoint and resume task cleaned up"
+
               "0" | Out-File -FilePath $exitFile -Encoding ascii
 
           } catch {
               Log "FATAL: $($_.Exception.Message)"
               Log "Stack: $($_.ScriptStackTrace)"
+              Log "Checkpoint preserved — re-run job to resume from last completed phase"
               "1" | Out-File -FilePath $exitFile -Encoding ascii
           } finally {
               Stop-Transcript -ErrorAction SilentlyContinue
@@ -371,20 +442,31 @@
     - name: Esegui setup cluster via Scheduled Task (WinRM double-hop workaround)
       ansible.windows.win_powershell:
         script: |
-          $taskName     = "AnsibleClusterSetup"
-          $workDir      = "{{ work_dir }}"
-          $scriptPath   = "$workDir\setup_cluster.ps1"
-          $exitFile     = "$workDir\exitcode.txt"
-          $logFile      = "$workDir\cluster_setup.log"
-          $transcript   = "$workDir\transcript.log"
-          $launcherPath = "$workDir\launcher.cmd"
-          $outputLog    = "$workDir\task_output.log"
+          $taskName       = "AnsibleClusterSetup"
+          $resumeTaskName = "AnsibleClusterSetup_Resume"
+          $workDir        = "{{ work_dir }}"
+          $scriptPath     = "$workDir\setup_cluster.ps1"
+          $exitFile       = "$workDir\exitcode.txt"
+          $logFile        = "$workDir\cluster_setup.log"
+          $transcript     = "$workDir\transcript.log"
+          $launcherPath   = "$workDir\launcher.cmd"
+          $outputLog      = "$workDir\task_output.log"
+          $checkpointFile = "$workDir\checkpoint.txt"
 
-          # Cleanup previous run
+          # Cleanup previous run outputs (but NOT checkpoint — needed for resume)
           foreach ($f in @($exitFile, $logFile, $transcript, $launcherPath, $outputLog)) {
             if (Test-Path $f) { Remove-Item $f -Force }
           }
           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+          Unregister-ScheduledTask -TaskName $resumeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+
+          # Show checkpoint state
+          if (Test-Path $checkpointFile) {
+              $cp = (Get-Content $checkpointFile -Raw).Trim()
+              Write-Output "Checkpoint found: phase $cp completed — will resume from phase $([int]$cp + 1)"
+          } else {
+              Write-Output "No checkpoint — starting from phase 0"
+          }
 
           # Write cmd launcher — captures ALL PowerShell output including parse errors
           $launcherContent = @"
@@ -395,7 +477,21 @@
           Write-Output "Launcher: $launcherPath"
           Get-Content $launcherPath | ForEach-Object { Write-Output "  $_" }
 
-          # Register task with domain credentials (Batch logon → Kerberos TGT)
+          # --- Register AtStartup resume task (survives unexpected reboots) ---
+          $resumeAction = New-ScheduledTaskAction -Execute "cmd.exe" `
+              -Argument "/c `"$launcherPath`"" `
+              -WorkingDirectory $workDir
+          $resumeTrigger = New-ScheduledTaskTrigger -AtStartup
+          $resumeSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+              -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 40) `
+              -StartWhenAvailable
+          Register-ScheduledTask -TaskName $resumeTaskName -Action $resumeAction `
+              -Trigger $resumeTrigger -Settings $resumeSettings `
+              -User "{{ domain_user }}" -Password "{{ domain_password }}" `
+              -RunLevel Highest -Force | Out-Null
+          Write-Output "AtStartup resume task '$resumeTaskName' registered (reboot safety net)"
+
+          # --- Register and start the main task ---
           $action   = New-ScheduledTaskAction -Execute "cmd.exe" `
               -Argument "/c `"$launcherPath`"" `
               -WorkingDirectory $workDir
@@ -437,6 +533,8 @@
           } while ([DateTime]::UtcNow -lt $deadline)
 
           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+          # Note: resume task is cleaned up by the PS1 script on success,
+          # or kept alive intentionally on failure (reboot safety net)
 
           # Show cluster setup log (written by PS1 script)
           if (Test-Path $logFile) {

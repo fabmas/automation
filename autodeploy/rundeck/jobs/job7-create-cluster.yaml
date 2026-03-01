@@ -4,6 +4,8 @@
   loglevel: INFO
   name: "07 - Create Cluster + AG (Ansible)"
   nodeFilterEditable: false
+  retry: '2'
+  retryDelay: '90s'
   scheduleEnabled: false
   sequence:
     commands:

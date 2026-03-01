@@ -4,6 +4,8 @@
   loglevel: INFO
   name: "06 - Install SQL Server (Ansible)"
   nodeFilterEditable: false
+  retry: '2'
+  retryDelay: '60s'
   scheduleEnabled: false
   sequence:
     commands:
