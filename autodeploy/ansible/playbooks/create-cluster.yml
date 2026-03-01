@@ -290,25 +290,70 @@
               Stop-Transcript -ErrorAction SilentlyContinue
           }
 
+    # ---- 1b. Valida sintassi PS1 ----
+    - name: Valida sintassi script PS1
+      ansible.windows.win_powershell:
+        script: |
+          $scriptPath = "{{ work_dir }}\setup_cluster.ps1"
+          if (-not (Test-Path $scriptPath)) {
+              Write-Error "PS1 not found: $scriptPath"; exit 1
+          }
+          $info = Get-Item $scriptPath
+          Write-Output "PS1: $scriptPath ($($info.Length) bytes)"
+          $errors = $null; $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              $scriptPath, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+              Write-Output "=== SYNTAX ERRORS ==="
+              foreach ($e in $errors) {
+                  Write-Output "  Line $($e.Extent.StartLineNumber): $($e.Message)"
+              }
+              $raw = Get-Content $scriptPath -Raw
+              Write-Output "=== First 500 chars ==="
+              Write-Output $raw.Substring(0, [Math]::Min(500, $raw.Length))
+              Write-Output "==="
+              Write-Error "PS1 has $($errors.Count) syntax error(s)"
+              exit 1
+          }
+          Write-Output "Syntax OK ($($tokens.Count) tokens)"
+      register: ps1_check
+
+    - name: Mostra validazione PS1
+      ansible.builtin.debug:
+        msg: "{{ ps1_check.output | default(['N/A']) }}"
+
     # ---- 2. Esegui via Scheduled Task ----
     - name: Esegui setup cluster via Scheduled Task (WinRM double-hop workaround)
       ansible.windows.win_powershell:
         script: |
-          $taskName    = "AnsibleClusterSetup"
-          $scriptPath  = "{{ work_dir }}\setup_cluster.ps1"
-          $exitFile    = "{{ work_dir }}\exitcode.txt"
-          $logFile     = "{{ work_dir }}\cluster_setup.log"
-          $transcript  = "{{ work_dir }}\transcript.log"
+          $taskName     = "AnsibleClusterSetup"
+          $workDir      = "{{ work_dir }}"
+          $scriptPath   = "$workDir\setup_cluster.ps1"
+          $exitFile     = "$workDir\exitcode.txt"
+          $logFile      = "$workDir\cluster_setup.log"
+          $transcript   = "$workDir\transcript.log"
+          $launcherPath = "$workDir\launcher.cmd"
+          $outputLog    = "$workDir\task_output.log"
 
           # Cleanup previous run
-          foreach ($f in @($exitFile, $logFile, $transcript)) {
+          foreach ($f in @($exitFile, $logFile, $transcript, $launcherPath, $outputLog)) {
             if (Test-Path $f) { Remove-Item $f -Force }
           }
           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
+          # Write cmd launcher — captures ALL PowerShell output including parse errors
+          $launcherContent = @"
+          @echo off
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$scriptPath" > "$outputLog" 2>&1
+          "@
+          Set-Content -Path $launcherPath -Value $launcherContent -Encoding ASCII
+          Write-Output "Launcher: $launcherPath"
+          Get-Content $launcherPath | ForEach-Object { Write-Output "  $_" }
+
           # Register task with domain credentials (Batch logon → Kerberos TGT)
-          $action   = New-ScheduledTaskAction -Execute "powershell.exe" `
-              -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+          $action   = New-ScheduledTaskAction -Execute "cmd.exe" `
+              -Argument "/c `"$launcherPath`"" `
+              -WorkingDirectory $workDir
           $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
               -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 40)
           Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings `
@@ -333,40 +378,50 @@
               $state = $task.State
               $lastResult = if ($info) { "0x{0:X}" -f $info.LastTaskResult } else { "N/A" }
               $tail  = ""
-              if (Test-Path $logFile) { $tail = (Get-Content $logFile -Tail 1) }
+              if (Test-Path $logFile) {
+                  $tail = (Get-Content $logFile -Tail 1)
+              } elseif (Test-Path $outputLog) {
+                  $tail = (Get-Content $outputLog -Tail 1)
+              }
               Write-Output "  [state=$state result=$lastResult] $tail"
 
-              # If task went to Ready and no exitcode, it failed to start
               if ($state -ne 'Running') {
-                  Write-Output "Task is no longer Running (state=$state, lastResult=$lastResult)"
+                  Write-Output "Task finished (state=$state, lastResult=$lastResult)"
                   break
               }
           } while ([DateTime]::UtcNow -lt $deadline)
 
           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
-          # Show cluster setup log
+          # Show cluster setup log (written by PS1 script)
           if (Test-Path $logFile) {
               Write-Output "=== Cluster Setup Log ==="
               Get-Content $logFile
               Write-Output "=== End Log ==="
           }
 
-          # Show transcript if log is missing (captures parse errors, crashes, etc.)
-          if (-not (Test-Path $logFile) -and (Test-Path $transcript)) {
-              Write-Output "=== Transcript (no log produced) ==="
+          # Show task output (cmd wrapper captured stdout+stderr including parse errors)
+          if (Test-Path $outputLog) {
+              Write-Output "=== Task Output (cmd wrapper) ==="
+              Get-Content $outputLog
+              Write-Output "=== End Task Output ==="
+          }
+
+          # Show transcript
+          if (Test-Path $transcript) {
+              Write-Output "=== Transcript ==="
               Get-Content $transcript -Tail 50
               Write-Output "=== End Transcript ==="
           }
 
-          # If no exitcode file, show Event Log for clues
+          # Determine result
           if (-not (Test-Path $exitFile)) {
               Write-Output "=== Task Scheduler Event Log (last 5) ==="
               Get-WinEvent -LogName "Microsoft-Windows-TaskScheduler/Operational" -MaxEvents 5 |
                   Where-Object { $_.Message -match $taskName } |
                   ForEach-Object { Write-Output "$($_.TimeCreated) [$($_.Id)] $($_.Message)" }
               Write-Output "=== End Event Log ==="
-              Write-Error "Cluster setup did not produce exit code — task state=$state lastResult=$lastResult"
+              Write-Error "Cluster setup did not produce exit code — see logs above"
               exit 1
           }
 
