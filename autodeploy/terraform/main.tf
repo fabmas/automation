@@ -100,6 +100,11 @@ resource "azurerm_windows_virtual_machine" "vm" {
     storage_account_type = "StandardSSD_LRS"
   }
 
+  # Windows Server 2025 Azure Edition abilita hotpatching di default.
+  # patch_mode e bypass sono obbligatori per questa immagine.
+  patch_mode                                             = "AutomaticByPlatform"
+  bypass_platform_safety_checks_on_user_schedule_enabled = true
+
   source_image_reference {
     publisher = "MicrosoftWindowsServer"
     offer     = "WindowsServer"

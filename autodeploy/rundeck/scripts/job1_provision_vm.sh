@@ -46,13 +46,16 @@ cd "$REPO_DIR"
 test -d "$TF_WORKDIR" || { echo "[job1] ERROR: tf_workdir not found: $TF_WORKDIR"; exit 1; }
 test -w "$TF_WORKDIR" || { echo "[job1] ERROR: tf_workdir not writable by $(whoami): $TF_WORKDIR"; echo "[job1] Hint: chgrp -R rundeck /opt/automation && chmod -R g+rwX /opt/automation/autodeploy/terraform"; exit 1; }
 
-# Ensure the local terraform working folder is writable (providers/locks etc.)
-mkdir -p "$TF_WORKDIR/.terraform" 2>/dev/null || true
-if [[ -d "$TF_WORKDIR/.terraform" ]] && [[ ! -w "$TF_WORKDIR/.terraform" ]]; then
-  echo "[job1] ERROR: $TF_WORKDIR/.terraform is not writable by $(whoami)"
-  echo "[job1] Hint: remove/repair root-owned .terraform and re-run: sudo rm -rf $TF_WORKDIR/.terraform"
-  exit 1
-fi
+# ── Isolate each parallel run in its own temp working directory ──
+# This prevents two concurrent terraform runs from conflicting on .terraform/ locks.
+_VM_SAFE="${VM_NAME_INPUT:-default}"
+TF_RUN_DIR=$(mktemp -d "/tmp/tf-${_VM_SAFE}-XXXXXX")
+cp "$TF_WORKDIR"/*.tf "$TF_RUN_DIR/"
+echo "[job1] isolated tf working dir: $TF_RUN_DIR"
+
+# Cleanup on exit
+_cleanup_tf() { rm -rf "$TF_RUN_DIR"; }
+trap _cleanup_tf EXIT
 
 command -v az >/dev/null || { echo "[job1] ERROR: az not found"; exit 1; }
 command -v terraform >/dev/null || { echo "[job1] ERROR: terraform not found"; exit 1; }
@@ -83,7 +86,7 @@ az storage container create \
   --public-access off \
   --output none || true
 
-terraform -chdir="$TF_WORKDIR" init -reconfigure -input=false \
+terraform -chdir="$TF_RUN_DIR" init -reconfigure -input=false \
   -backend-config="resource_group_name=$BACKEND_RG" \
   -backend-config="storage_account_name=$STATE_STORAGE_ACCOUNT" \
   -backend-config="container_name=$STATE_CONTAINER" \
@@ -92,12 +95,12 @@ terraform -chdir="$TF_WORKDIR" init -reconfigure -input=false \
   -backend-config="subscription_id=$AZ_SUBSCRIPTION_ID" \
   -backend-config="tenant_id=$AZ_TENANT_ID"
 
-terraform -chdir="$TF_WORKDIR" validate
-terraform -chdir="$TF_WORKDIR" plan -out tfplan
-terraform -chdir="$TF_WORKDIR" apply -auto-approve tfplan
+terraform -chdir="$TF_RUN_DIR" validate
+terraform -chdir="$TF_RUN_DIR" plan -out tfplan
+terraform -chdir="$TF_RUN_DIR" apply -auto-approve tfplan
 
-VM_NAME=$(terraform -chdir="$TF_WORKDIR" output -raw vm_name)
-VM_IP=$(terraform -chdir="$TF_WORKDIR" output -raw vm_private_ip)
+VM_NAME=$(terraform -chdir="$TF_RUN_DIR" output -raw vm_name)
+VM_IP=$(terraform -chdir="$TF_RUN_DIR" output -raw vm_private_ip)
 
 umask 077
 cat > "$ANSIBLE_INVENTORY_PATH" <<EOF
