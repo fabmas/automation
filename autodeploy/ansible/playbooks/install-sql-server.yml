@@ -51,69 +51,119 @@
       register: mount_result
       when: sql_iso_url | length > 0
 
-    - name: Prepara TEMP directory per SQL Setup (WinRM workaround)
+    - name: Prepara script di setup SQL Server e Scheduled Task (DPAPI workaround)
       ansible.windows.win_powershell:
         script: |
-          # WinRM sessions often have TEMP pointing to a non-existent profile dir.
-          # SQL Setup's XML serializer fails if TEMP is invalid.
-          $tempDir = "C:\Windows\Temp\SQLSetup"
-          if (-not (Test-Path $tempDir)) { New-Item -Path $tempDir -ItemType Directory -Force | Out-Null }
-          Write-Output $tempDir
-
-    - name: Installa SQL Server (unattended)
-      ansible.windows.win_powershell:
-        script: |
-          # Force TEMP/TMP to a known-good writable directory (WinRM workaround)
-          $env:TEMP = "C:\Windows\Temp\SQLSetup"
-          $env:TMP  = "C:\Windows\Temp\SQLSetup"
+          # WinRM sessions use "Network" logon — DPAPI ProtectedData.Protect() fails
+          # because no user profile/master key is loaded.
+          # Workaround: write a setup script to disk, run it via Scheduled Task
+          # (which uses "Batch" logon → DPAPI works).
 
           $setupDrive = "{{ mount_result.output[0] | default('D') }}"
-          $setupPath = "${setupDrive}:\setup.exe"
-          if (-not (Test-Path $setupPath)) {
-              $setupPath = "{{ sql_setup_path }}\setup.exe"
+          $setupExe = "${setupDrive}:\setup.exe"
+          if (-not (Test-Path $setupExe)) {
+              $setupExe = "{{ sql_setup_path }}\setup.exe"
           }
-          if (-not (Test-Path $setupPath)) {
+          if (-not (Test-Path $setupExe)) {
               Write-Error "setup.exe not found"
               exit 1
           }
 
-          $setupArgs = '/Q /IACCEPTSQLSERVERLICENSETERMS /ACTION=Install ' +
-              '/FEATURES={{ sql_features }} ' +
-              '/INSTANCENAME={{ sql_instance_name }} ' +
-              '/SQLSVCACCOUNT="{{ sql_svc_account }}" ' +
-              '/AGTSVCACCOUNT="{{ sql_agent_svc_account }}" ' +
-              '/SQLSYSADMINACCOUNTS="BUILTIN\Administrators" ' +
-              '/SECURITYMODE=SQL ' +
-              '/SAPWD="{{ sql_sa_password }}" ' +
-              '/SQLCOLLATION={{ sql_collation }} ' +
-              '/TCPENABLED=1 /NPENABLED=0 /UpdateEnabled=False /ENU'
+          $logDir = "C:\Windows\Temp\SQLSetup"
+          if (-not (Test-Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
 
-          Write-Output "Running: $setupPath (args omitted for security)"
-          $proc = Start-Process -FilePath $setupPath -ArgumentList $setupArgs `
-              -Wait -PassThru -NoNewWindow `
-              -RedirectStandardOutput "C:\Windows\Temp\SQLSetup\setup_stdout.txt" `
-              -RedirectStandardError  "C:\Windows\Temp\SQLSetup\setup_stderr.txt"
+          # Write the setup wrapper script
+          $scriptContent = @"
+          `$env:TEMP = "$logDir"
+          `$env:TMP  = "$logDir"
+          `$proc = Start-Process -FilePath "$setupExe" -ArgumentList @(
+              '/Q',
+              '/IACCEPTSQLSERVERLICENSETERMS',
+              '/ACTION=Install',
+              '/FEATURES={{ sql_features }}',
+              '/INSTANCENAME={{ sql_instance_name }}',
+              '/SQLSVCACCOUNT="{{ sql_svc_account }}"',
+              '/AGTSVCACCOUNT="{{ sql_agent_svc_account }}"',
+              '/SQLSYSADMINACCOUNTS="BUILTIN\Administrators"',
+              '/SECURITYMODE=SQL',
+              '/SAPWD="{{ sql_sa_password }}"',
+              '/SQLCOLLATION={{ sql_collation }}',
+              '/TCPENABLED=1',
+              '/NPENABLED=0',
+              '/UpdateEnabled=False',
+              '/ENU'
+          ) -Wait -PassThru -NoNewWindow
+          `$proc.ExitCode | Out-File -FilePath "$logDir\exitcode.txt" -Encoding ascii
+          "@
 
-          Write-Output "Exit code: $($proc.ExitCode)"
-          if ($proc.ExitCode -notin @(0, 3010)) {
-              # Read Summary.txt for diagnostics
-              $summaryPath = Get-ChildItem "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\Log\Summary.txt" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $scriptPath = "$logDir\run_sql_setup.ps1"
+          Set-Content -Path $scriptPath -Value $scriptContent -Encoding UTF8
+          Write-Output $scriptPath
+
+    - name: Installa SQL Server via Scheduled Task (DPAPI-safe)
+      ansible.windows.win_powershell:
+        script: |
+          $taskName  = "AnsibleSQLSetup"
+          $scriptPath = "C:\Windows\Temp\SQLSetup\run_sql_setup.ps1"
+          $exitFile   = "C:\Windows\Temp\SQLSetup\exitcode.txt"
+
+          # Cleanup any previous run
+          if (Test-Path $exitFile) { Remove-Item $exitFile -Force }
+          Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+
+          # Create and run scheduled task as localadmin (Batch logon → DPAPI works)
+          $action  = New-ScheduledTaskAction -Execute "powershell.exe" `
+              -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+          $principal = New-ScheduledTaskPrincipal -UserId "{{ ansible_user }}" `
+              -LogonType Password -RunLevel Highest
+          Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal `
+              -Password "{{ ansible_password }}" -Force | Out-Null
+
+          Start-ScheduledTask -TaskName $taskName
+          Write-Output "Scheduled task started — waiting for SQL Setup to finish..."
+
+          # Poll until the task is no longer Running (timeout: 50 min)
+          $timeout = [DateTime]::UtcNow.AddMinutes(50)
+          do {
+              Start-Sleep -Seconds 15
+              $info = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue
+              $state = (Get-ScheduledTask -TaskName $taskName).State
+              Write-Output "  state=$state ($(([DateTime]::UtcNow).ToString('HH:mm:ss')))"
+          } while ($state -eq 'Running' -and [DateTime]::UtcNow -lt $timeout)
+
+          # Cleanup task
+          Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+
+          # Read exit code
+          if (-not (Test-Path $exitFile)) {
+              Write-Error "SQL Setup did not produce an exit code (timeout or crash)"
+              exit 1
+          }
+
+          $exitCode = [int](Get-Content $exitFile -Raw).Trim()
+          Write-Output "SQL Setup exit code: $exitCode"
+
+          if ($exitCode -notin @(0, 3010)) {
+              $summaryPath = Get-ChildItem "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\Log\Summary.txt" `
+                  -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
               if ($summaryPath) {
                   Write-Output "=== Summary.txt ==="
                   Get-Content $summaryPath.FullName -Tail 60
                   Write-Output "=== End Summary.txt ==="
               }
-              Write-Error "SQL Setup failed with exit code $($proc.ExitCode)"
+              Write-Error "SQL Setup failed with exit code $exitCode"
               exit 1
           }
-          Write-Output "SQL Server installed (exit code: $($proc.ExitCode))"
+
+          if ($exitCode -eq 3010) { Write-Output "REBOOT_REQUIRED" }
+          Write-Output "SQL Server installed successfully"
       register: sql_install
       timeout: 3600
 
     - name: Reboot se richiesto (exit code 3010)
       ansible.windows.win_reboot:
         reboot_timeout: 600
-      when: "'3010' in (sql_install.output | default(['']) | join(''))"
+      when: "'REBOOT_REQUIRED' in (sql_install.output | default(['']) | join(''))"
 
     - name: Verifica servizio SQL Server
       ansible.windows.win_service:
