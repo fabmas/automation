@@ -125,7 +125,7 @@
               Log "--- Phase 0: Prerequisites ---"
               Log "Testing PSRemoting to {{ node2_fqdn }}..."
               $r = Invoke-Command -ComputerName "{{ node2_fqdn }}" -ScriptBlock { hostname }
-              Log "PSRemoting OK — {{ node2_fqdn }} returned: $r"
+              Log "PSRemoting OK -- {{ node2_fqdn }} returned: $r"
 
               # Open firewall ports on both nodes
               foreach ($port in @(1433, 5022)) {
@@ -148,7 +148,7 @@
               $clusterObj = $null
               try { $clusterObj = Get-Cluster -Name "{{ cluster_name }}" -ErrorAction Stop } catch {}
               if ($clusterObj) {
-                  Log "Cluster '{{ cluster_name }}' already exists — skip"
+                  Log "Cluster '{{ cluster_name }}' already exists -- skip"
               } else {
                   New-Cluster -Name "{{ cluster_name }}" `
                       -Node "{{ node1_fqdn }}", "{{ node2_fqdn }}" `
@@ -218,9 +218,9 @@
               } catch {}
 
               if ($existingAg) {
-                  Log "AG '{{ ag_name }}' already exists — skip"
+                  Log "AG '{{ ag_name }}' already exists -- skip"
               } else {
-                  # Hadr endpoint — node 1
+                  # Hadr endpoint -- node 1
                   try {
                       $ep1 = New-SqlHadrEndpoint -Path "SQLSERVER:\SQL\{{ node1_fqdn }}\DEFAULT" `
                           -Name "Hadr_endpoint" -Port 5022 -ErrorAction Stop
@@ -228,7 +228,7 @@
                   } catch { Log "Hadr_endpoint node1: $($_.Exception.Message) (may exist)" }
                   Log "Hadr_endpoint {{ node1_fqdn }} OK"
 
-                  # Hadr endpoint — node 2
+                  # Hadr endpoint -- node 2
                   $ep2Q = "IF NOT EXISTS (SELECT 1 FROM sys.endpoints WHERE name='Hadr_endpoint') " +
                           "CREATE ENDPOINT Hadr_endpoint STATE=STARTED AS TCP(LISTENER_PORT=5022) " +
                           "FOR DATABASE_MIRRORING(ROLE=ALL, AUTHENTICATION=WINDOWS NEGOTIATE, ENCRYPTION=REQUIRED ALGORITHM AES)"
@@ -270,7 +270,7 @@
               } catch {}
 
               if ($existingLsn) {
-                  Log "DNN Listener '{{ listener_name }}' already exists — skip"
+                  Log "DNN Listener '{{ listener_name }}' already exists -- skip"
               } else {
                   $lsnQ = "ALTER AVAILABILITY GROUP [{{ ag_name }}] ADD LISTENER N'{{ listener_name }}' " +
                           "(WITH DISTRIBUTED_NETWORK_NAME, WITH IP (NONE), PORT = {{ listener_port }})"
@@ -289,6 +289,17 @@
           } finally {
               Stop-Transcript -ErrorAction SilentlyContinue
           }
+
+    # ---- 1a. Riscrivi PS1 con BOM UTF-8 (PowerShell 5.1 legge ANSI senza BOM) ----
+    - name: Riscrivi PS1 con BOM UTF-8
+      ansible.windows.win_powershell:
+        script: |
+          $path = "{{ work_dir }}\setup_cluster.ps1"
+          $content = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
+          $utf8Bom = New-Object System.Text.UTF8Encoding $true
+          [System.IO.File]::WriteAllText($path, $content, $utf8Bom)
+          $info = Get-Item $path
+          Write-Output "Rewritten with UTF-8 BOM: $path ($($info.Length) bytes)"
 
     # ---- 1b. Valida sintassi PS1 ----
     - name: Valida sintassi script PS1
