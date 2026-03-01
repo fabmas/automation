@@ -92,7 +92,7 @@
               $domainUser, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
           $acl.SetAccessRule($rule)
           Set-Acl $workDir $acl
-          Write-Output "ACL FullControl on $workDir for $domainUser: OK"
+          Write-Output "ACL FullControl on ${workDir} for ${domainUser}: OK"
 
     # ---- 1. Scrivi lo script completo di setup ----
     - name: Scrivi script di setup cluster + AG
