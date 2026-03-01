@@ -2,11 +2,16 @@
 # create-cluster.yml — Crea WSFC + configura SQL Always On AG.
 #
 # ARCHITETTURA: Tutte le operazioni cluster/AG vengono eseguite tramite
-# Scheduled Task (logon Batch) perché:
+# Scheduled Task (logon Batch) con account di dominio perché:
 #   1. I cmdlet FailoverClusters richiedono delegazione credenziali
 #      che WinRM/NTLM non supporta (double-hop problem).
-#   2. Le operazioni cluster richiedono un account di dominio.
-#   3. Il logon Batch fornisce un token completo con credenziali delegabili.
+#   2. Le operazioni cluster richiedono un account di dominio (Domain Admin).
+#   3. Il logon Batch fornisce un token completo con Kerberos TGT delegabile.
+#
+# Pre-requisiti gestiti dal playbook:
+#   - SeBatchLogonRight per domain_user
+#   - ACL FullControl sulla cartella di lavoro
+#   - Start-Transcript per diagnostica
 #
 # Variabili richieste (passate via -e):
 #   cluster_name, cluster_ip, node1_name, node2_name,
@@ -29,31 +34,89 @@
     storage_account_key: ""
     domain_user: ""
     domain_password: ""
+    work_dir: 'C:\Windows\Temp\ClusterSetup'
     # Derived
     node1_fqdn: "{{ node1_name }}.fabmas.it"
     node2_fqdn: "{{ node2_name }}.fabmas.it"
 
   tasks:
-    # ---- 1. Scrivi lo script completo di setup ----
+    # ---- 0. Prepara ambiente ----
     - name: Crea cartella di lavoro
       ansible.windows.win_file:
-        path: C:\Windows\Temp\ClusterSetup
+        path: "{{ work_dir }}"
         state: directory
 
+    - name: Concedi SeBatchLogonRight e ACL al domain user
+      ansible.windows.win_powershell:
+        script: |
+          $domainUser = "{{ domain_user }}"
+          $workDir    = "{{ work_dir }}"
+
+          # --- 1. Grant SeBatchLogonRight ---
+          try {
+              $sid = (New-Object System.Security.Principal.NTAccount($domainUser)).Translate(
+                  [System.Security.Principal.SecurityIdentifier]).Value
+              Write-Output "Domain user SID: $sid"
+
+              $tmpCfg = "$env:TEMP\secpol_export_$((Get-Random)).cfg"
+              $tmpDb  = "$env:TEMP\secpol_$((Get-Random)).sdb"
+
+              secedit /export /cfg $tmpCfg /quiet | Out-Null
+              $content = Get-Content $tmpCfg -Raw
+
+              if ($content -match 'SeBatchLogonRight\s*=\s*(.*)') {
+                  $existing = $Matches[0]
+                  if ($existing -notmatch [regex]::Escape($sid)) {
+                      $content = $content -replace [regex]::Escape($existing), "$existing,*$sid"
+                      Write-Output "Appended $domainUser to SeBatchLogonRight"
+                  } else {
+                      Write-Output "SeBatchLogonRight already contains $domainUser"
+                  }
+              } else {
+                  $content = $content -replace '(\[Privilege Rights\])', "`$1`r`nSeBatchLogonRight = *$sid"
+                  Write-Output "Added SeBatchLogonRight for $domainUser"
+              }
+
+              Set-Content $tmpCfg $content -Encoding ASCII
+              secedit /configure /db $tmpDb /cfg $tmpCfg /quiet | Out-Null
+              Remove-Item $tmpCfg, $tmpDb -Force -ErrorAction SilentlyContinue
+              Write-Output "SeBatchLogonRight: OK"
+          } catch {
+              Write-Output "WARNING: SeBatchLogonRight grant failed — $($_.Exception.Message)"
+              # Might already work via Domain Admins → Administrators group
+          }
+
+          # --- 2. ACL FullControl on work directory ---
+          $acl  = Get-Acl $workDir
+          $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+              $domainUser, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+          $acl.SetAccessRule($rule)
+          Set-Acl $workDir $acl
+          Write-Output "ACL FullControl on $workDir for $domainUser: OK"
+
+    # ---- 1. Scrivi lo script completo di setup ----
     - name: Scrivi script di setup cluster + AG
       ansible.windows.win_copy:
-        dest: C:\Windows\Temp\ClusterSetup\setup_cluster.ps1
+        dest: "{{ work_dir }}\\setup_cluster.ps1"
         content: |
+          # Transcript per diagnostica (cattura TUTTO anche se lo script crasha)
+          Start-Transcript -Path "C:\Windows\Temp\ClusterSetup\transcript.log" -Force
+
           $ErrorActionPreference = 'Stop'
           $logFile  = "C:\Windows\Temp\ClusterSetup\cluster_setup.log"
           $exitFile = "C:\Windows\Temp\ClusterSetup\exitcode.txt"
 
           function Log { param([string]$msg)
-            Add-Content -Path $logFile -Value "$(Get-Date -Format 'HH:mm:ss')  $msg"
+            $ts = Get-Date -Format 'HH:mm:ss'
+            $line = "$ts  $msg"
+            Add-Content -Path $logFile -Value $line
+            Write-Host $line
           }
 
           try {
               Log "=== Cluster + AG Setup ==="
+              Log "Running as: $env:USERDOMAIN\$env:USERNAME"
+              Log "Logon type test: whoami=$(whoami)"
               Log "Node1: {{ node1_fqdn }}  Node2: {{ node2_fqdn }}"
               Log "Cluster: {{ cluster_name }} ({{ cluster_ip }})"
               Log "AG: {{ ag_name }}   Listener(DNN): {{ listener_name }}"
@@ -223,21 +286,27 @@
               Log "FATAL: $($_.Exception.Message)"
               Log "Stack: $($_.ScriptStackTrace)"
               "1" | Out-File -FilePath $exitFile -Encoding ascii
+          } finally {
+              Stop-Transcript -ErrorAction SilentlyContinue
           }
 
     # ---- 2. Esegui via Scheduled Task ----
     - name: Esegui setup cluster via Scheduled Task (WinRM double-hop workaround)
       ansible.windows.win_powershell:
         script: |
-          $taskName   = "AnsibleClusterSetup"
-          $scriptPath = "C:\Windows\Temp\ClusterSetup\setup_cluster.ps1"
-          $exitFile   = "C:\Windows\Temp\ClusterSetup\exitcode.txt"
-          $logFile    = "C:\Windows\Temp\ClusterSetup\cluster_setup.log"
+          $taskName    = "AnsibleClusterSetup"
+          $scriptPath  = "{{ work_dir }}\setup_cluster.ps1"
+          $exitFile    = "{{ work_dir }}\exitcode.txt"
+          $logFile     = "{{ work_dir }}\cluster_setup.log"
+          $transcript  = "{{ work_dir }}\transcript.log"
 
-          # Cleanup
-          foreach ($f in @($exitFile, $logFile)) { if (Test-Path $f) { Remove-Item $f -Force } }
+          # Cleanup previous run
+          foreach ($f in @($exitFile, $logFile, $transcript)) {
+            if (Test-Path $f) { Remove-Item $f -Force }
+          }
           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
+          # Register task with domain credentials (Batch logon → Kerberos TGT)
           $action   = New-ScheduledTaskAction -Execute "powershell.exe" `
               -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
           $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
@@ -249,27 +318,55 @@
           Start-ScheduledTask -TaskName $taskName
           Write-Output "Scheduled task started — cluster setup in progress..."
 
+          # Give the task a moment to actually start
+          Start-Sleep -Seconds 5
+
           # Poll (max 35 min)
           $deadline = [DateTime]::UtcNow.AddMinutes(35)
+          $firstPoll = $true
           do {
-              Start-Sleep -Seconds 15
-              $state = (Get-ScheduledTask -TaskName $taskName).State
+              if (-not $firstPoll) { Start-Sleep -Seconds 15 }
+              $firstPoll = $false
+
+              $task  = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+              $info  = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction SilentlyContinue
+              $state = $task.State
+              $lastResult = if ($info) { "0x{0:X}" -f $info.LastTaskResult } else { "N/A" }
               $tail  = ""
               if (Test-Path $logFile) { $tail = (Get-Content $logFile -Tail 1) }
-              Write-Output "  [$state] $tail"
-          } while ($state -eq 'Running' -and [DateTime]::UtcNow -lt $deadline)
+              Write-Output "  [state=$state result=$lastResult] $tail"
+
+              # If task went to Ready and no exitcode, it failed to start
+              if ($state -ne 'Running') {
+                  Write-Output "Task is no longer Running (state=$state, lastResult=$lastResult)"
+                  break
+              }
+          } while ([DateTime]::UtcNow -lt $deadline)
 
           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
-          # Log completo
+          # Show cluster setup log
           if (Test-Path $logFile) {
               Write-Output "=== Cluster Setup Log ==="
               Get-Content $logFile
               Write-Output "=== End Log ==="
           }
 
+          # Show transcript if log is missing (captures parse errors, crashes, etc.)
+          if (-not (Test-Path $logFile) -and (Test-Path $transcript)) {
+              Write-Output "=== Transcript (no log produced) ==="
+              Get-Content $transcript -Tail 50
+              Write-Output "=== End Transcript ==="
+          }
+
+          # If no exitcode file, show Event Log for clues
           if (-not (Test-Path $exitFile)) {
-              Write-Error "Cluster setup did not produce exit code (timeout or crash)"
+              Write-Output "=== Task Scheduler Event Log (last 5) ==="
+              Get-WinEvent -LogName "Microsoft-Windows-TaskScheduler/Operational" -MaxEvents 5 |
+                  Where-Object { $_.Message -match $taskName } |
+                  ForEach-Object { Write-Output "$($_.TimeCreated) [$($_.Id)] $($_.Message)" }
+              Write-Output "=== End Event Log ==="
+              Write-Error "Cluster setup did not produce exit code — task state=$state lastResult=$lastResult"
               exit 1
           }
 
