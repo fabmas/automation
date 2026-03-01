@@ -18,6 +18,9 @@ export ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-${ANSIBLE_WORKDIR}/inventory/terr
 KEYVAULT_NAME="${KEYVAULT_NAME:-fabmas-kv1}"
 LOCALADMIN_SECRET_NAME="${LOCALADMIN_SECRET_NAME:-winproto01-localadmin}"
 
+# Storage account per Cloud Witness (quorum)
+STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-fabmastorageaccount01}"
+
 NODE1_NAME="${NODE1_NAME:?NODE1_NAME is required}"
 NODE2_NAME="${NODE2_NAME:?NODE2_NAME is required}"
 CLUSTER_NAME="${CLUSTER_NAME:?CLUSTER_NAME is required}"
@@ -29,6 +32,7 @@ LISTENER_IP="${LISTENER_IP:?LISTENER_IP is required}"
 echo "[job7] node1=$NODE1_NAME  node2=$NODE2_NAME"
 echo "[job7] cluster=$CLUSTER_NAME ($CLUSTER_IP)"
 echo "[job7] ag=$AG_NAME  listener=$LISTENER_NAME ($LISTENER_IP)"
+echo "[job7] cloud witness storage=$STORAGE_ACCOUNT"
 
 az login --identity --output none || true
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
@@ -68,6 +72,17 @@ PY
 echo "[job7] runtime inventory created"
 unset LOCALADMIN_PASSWORD
 
+# Recupera la access key dello storage account per il Cloud Witness
+echo "[job7] reading storage account key for Cloud Witness..."
+STORAGE_KEY=$(az storage account keys list \
+  --account-name "$STORAGE_ACCOUNT" \
+  --query "[0].value" -o tsv)
+
+if [[ -z "$STORAGE_KEY" ]]; then
+  echo "[job7] WARNING: could not read storage key — Cloud Witness will be skipped"
+  STORAGE_KEY=""
+fi
+
 ansible-playbook -i "$INVENTORY_RUNTIME" playbooks/create-cluster.yml \
   -e "node1_name=$NODE1_NAME" \
   -e "node2_name=$NODE2_NAME" \
@@ -76,6 +91,8 @@ ansible-playbook -i "$INVENTORY_RUNTIME" playbooks/create-cluster.yml \
   -e "ag_name=$AG_NAME" \
   -e "listener_name=$LISTENER_NAME" \
   -e "listener_ip=$LISTENER_IP" \
+  -e "storage_account_name=$STORAGE_ACCOUNT" \
+  -e "storage_account_key=$STORAGE_KEY" \
   -v
 
 echo "[job7] done ($(date -Is))"

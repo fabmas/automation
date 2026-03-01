@@ -16,6 +16,7 @@
           export AZ_SUBSCRIPTION_ID="@option.az_subscription_id@"
           export KEYVAULT_NAME="@option.keyvault_name@"
           export LOCALADMIN_SECRET_NAME="@option.localadmin_secret_name@"
+          export STORAGE_ACCOUNT="@option.storage_account@"
           export NODE1_NAME="@option.node1_name@"
           export NODE2_NAME="@option.node2_name@"
           export CLUSTER_NAME="@option.cluster_name@"
@@ -52,6 +53,10 @@
       label: Local admin secret name
       required: true
       value: winproto01-localadmin
+    - name: storage_account
+      label: Storage Account (Cloud Witness)
+      required: true
+      value: fabmastorageaccount01
     - name: node1_name
       label: Node 1 hostname
       required: true

@@ -10,6 +10,8 @@
 #   ag_name:        Nome dell'Availability Group (es. AG-SQL01)
 #   listener_name:  Nome del listener AG (es. SQLAG-LSN)
 #   listener_ip:    IP statico del listener (es. 10.0.0.51)
+#   storage_account_name: Nome storage account per Cloud Witness (es. fabmastorageaccount01)
+#   storage_account_key:  Access key dello storage account (passata dal job Rundeck)
 #
 # NOTA: Questo playbook viene eseguito sul nodo 1 che orchestrerà la creazione
 #       del cluster e la configurazione dell'AG.
@@ -31,6 +33,8 @@
     listener_name: ""
     listener_ip: ""
     listener_port: "1433"
+    storage_account_name: ""
+    storage_account_key: ""
     # Derived
     node1_fqdn: "{{ node1_name }}.fabmas.it"
     node2_fqdn: "{{ node2_name }}.fabmas.it"
@@ -70,6 +74,28 @@
     - name: Mostra risultato creazione cluster
       ansible.builtin.debug:
         msg: "{{ cluster_create.output | default(['N/A']) }}"
+
+    # ---- 2b. Configura Cloud Witness (quorum) ----
+    - name: Configura Cloud Witness per quorum
+      ansible.windows.win_powershell:
+        script: |
+          $witness = Get-ClusterQuorum -Cluster "{{ cluster_name }}" | Select-Object -ExpandProperty QuorumResource
+          if ($witness -and $witness.ResourceType -eq 'Cloud Witness') {
+              Write-Output "Cloud Witness already configured"
+          } else {
+              Set-ClusterQuorum -Cluster "{{ cluster_name }}" `
+                  -CloudWitness `
+                  -AccountName "{{ storage_account_name }}" `
+                  -AccessKey "{{ storage_account_key }}" `
+                  -ErrorAction Stop
+              Write-Output "Cloud Witness configured on storage account '{{ storage_account_name }}'"
+          }
+      register: cloud_witness
+      when: storage_account_name | length > 0 and storage_account_key | length > 0
+
+    - name: Mostra risultato Cloud Witness
+      ansible.builtin.debug:
+        msg: "{{ cloud_witness.output | default(['Skipped — no storage account provided']) }}"
 
     # ---- 3. Abilita Always On su entrambi i nodi ----
     - name: Abilita SQL Server Always On (nodo 1)
@@ -184,7 +210,8 @@
       ansible.builtin.debug:
         msg: |
           === Cluster + AG Summary ===
-          Cluster:   {{ cluster_name }} ({{ cluster_ip }})
-          Nodes:     {{ node1_fqdn }}, {{ node2_fqdn }}
-          AG:        {{ ag_name }}
-          Listener:  {{ listener_name }} ({{ listener_ip }}:{{ listener_port }})
+          Cluster:       {{ cluster_name }} ({{ cluster_ip }})
+          Nodes:         {{ node1_fqdn }}, {{ node2_fqdn }}
+          Cloud Witness: {{ storage_account_name | default('N/A') }}
+          AG:            {{ ag_name }}
+          Listener:      {{ listener_name }} ({{ listener_ip }}:{{ listener_port }})
