@@ -173,6 +173,7 @@ router.post('/job5', async (req, res) => {
  * Body: { vmName: "sqlnode01" }
  *
  * Triggers Job 6 (Ansible — Install SQL Server).
+ * The Rundeck script generates a temporary SAS URL for the ISO from Azure Storage.
  */
 router.post('/job6', async (req, res) => {
   try {
@@ -181,6 +182,8 @@ router.post('/job6', async (req, res) => {
     if (vmName) {
       opts.localadmin_secret_name = `${vmName}-localadmin`;
     }
+    // Storage defaults are in the Rundeck job definition;
+    // no need to override here unless customisation is needed.
     const exec = await rundeck.runJob(JOB6_ID, opts);
     res.json({
       job6: {

@@ -17,10 +17,15 @@ export ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-${ANSIBLE_WORKDIR}/inventory/terr
 
 KEYVAULT_NAME="${KEYVAULT_NAME:-fabmas-kv1}"
 LOCALADMIN_SECRET_NAME="${LOCALADMIN_SECRET_NAME:-winproto01-localadmin}"
-SQL_ISO_URL="${SQL_ISO_URL:-}"
+
+# Storage account che ospita la ISO di SQL Server
+STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-fabmastorageaccount01}"
+ISO_CONTAINER="${ISO_CONTAINER:-software}"
+ISO_BLOB="${ISO_BLOB:-SQLServer2022-x64-ENU.iso}"
 
 echo "[job6] ansible_workdir=$ANSIBLE_WORKDIR"
 echo "[job6] inventory=$ANSIBLE_INVENTORY"
+echo "[job6] storage=$STORAGE_ACCOUNT/$ISO_CONTAINER/$ISO_BLOB"
 
 az login --identity --output none || true
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
@@ -30,6 +35,27 @@ command -v ansible-playbook >/dev/null || { echo "[job6] ERROR: ansible-playbook
 
 cd "$ANSIBLE_WORKDIR"
 test -f "$ANSIBLE_INVENTORY" || { echo "[job6] ERROR: inventory not found: $ANSIBLE_INVENTORY"; exit 1; }
+
+# ── Genera SAS URL temporanea (1h) per la ISO su storage account ──
+echo "[job6] generating temporary SAS URL for SQL Server ISO..."
+SAS_EXPIRY=$(date -u -d '+1 hour' +%Y-%m-%dT%H:%MZ)
+SAS_TOKEN=$(az storage blob generate-sas \
+  --account-name "$STORAGE_ACCOUNT" \
+  --container-name "$ISO_CONTAINER" \
+  --name "$ISO_BLOB" \
+  --permissions r \
+  --expiry "$SAS_EXPIRY" \
+  --auth-mode login \
+  --as-user \
+  --output tsv)
+
+if [[ -z "$SAS_TOKEN" ]]; then
+  echo "[job6] ERROR: failed to generate SAS token"
+  exit 1
+fi
+
+SQL_ISO_URL="https://${STORAGE_ACCOUNT}.blob.core.windows.net/${ISO_CONTAINER}/${ISO_BLOB}?${SAS_TOKEN}"
+echo "[job6] SAS URL generated (expires: $SAS_EXPIRY)"
 
 TMPDIR=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR"; }
@@ -60,11 +86,7 @@ PY
 echo "[job6] runtime inventory created"
 unset LOCALADMIN_PASSWORD
 
-EXTRA_VARS=""
-if [[ -n "$SQL_ISO_URL" ]]; then
-  EXTRA_VARS="-e sql_iso_url=$SQL_ISO_URL"
-fi
-
-ansible-playbook -i "$INVENTORY_RUNTIME" playbooks/install-sql-server.yml $EXTRA_VARS -v
+ansible-playbook -i "$INVENTORY_RUNTIME" playbooks/install-sql-server.yml \
+  -e "sql_iso_url=$SQL_ISO_URL" -v
 
 echo "[job6] done ($(date -Is))"

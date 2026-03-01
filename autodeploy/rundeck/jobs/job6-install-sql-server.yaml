@@ -16,7 +16,9 @@
           export AZ_SUBSCRIPTION_ID="@option.az_subscription_id@"
           export KEYVAULT_NAME="@option.keyvault_name@"
           export LOCALADMIN_SECRET_NAME="@option.localadmin_secret_name@"
-          export SQL_ISO_URL="@option.sql_iso_url@"
+          export STORAGE_ACCOUNT="@option.storage_account@"
+          export ISO_CONTAINER="@option.iso_container@"
+          export ISO_BLOB="@option.iso_blob@"
 
           bash "@option.repo_dir@/autodeploy/rundeck/scripts/job6_install_sql.sh"
     keepgoing: false
@@ -46,7 +48,15 @@
       label: Local admin secret name
       required: true
       value: winproto01-localadmin
-    - name: sql_iso_url
-      label: SQL Server ISO URL
-      required: false
-      value: ""
+    - name: storage_account
+      label: Storage Account name
+      required: true
+      value: fabmastorageaccount01
+    - name: iso_container
+      label: Blob container
+      required: true
+      value: software
+    - name: iso_blob
+      label: ISO blob name
+      required: true
+      value: SQLServer2022-x64-ENU.iso
