@@ -14,20 +14,25 @@ REPO_DIR="${REPO_DIR:-/opt/automation}"
 AZ_SUBSCRIPTION_ID="${AZ_SUBSCRIPTION_ID:-9af59c0f-7661-48ec-ac0d-fc61688f01ea}"
 
 ANSIBLE_WORKDIR="${ANSIBLE_WORKDIR:-${REPO_DIR}/autodeploy/ansible}"
-export ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-${ANSIBLE_WORKDIR}/inventory/terraform.yml}"
-
-echo "[job2] repo_dir=$REPO_DIR"
-echo "[job2] ansible_workdir=$ANSIBLE_WORKDIR"
-echo "[job2] inventory=$ANSIBLE_INVENTORY"
 
 # Default secrets from Key Vault (can be overridden by Rundeck options/env)
 KEYVAULT_NAME="${KEYVAULT_NAME:-fabmas-kv1}"
 LOCALADMIN_SECRET_NAME="${LOCALADMIN_SECRET_NAME:-winproto01-localadmin}"
 DOMAIN_JOIN_SECRET_NAME="${DOMAIN_JOIN_SECRET_NAME:-fabmas-joiner-password}"
 
+# Derive VM name from secret name (e.g. sql01-localadmin -> sql01)
+VM_NAME="${VM_NAME:-${LOCALADMIN_SECRET_NAME%-localadmin}}"
+
+echo "[job2] repo_dir=$REPO_DIR"
+echo "[job2] ansible_workdir=$ANSIBLE_WORKDIR"
+echo "[job2] target VM: $VM_NAME"
+
 # If set, uses these instead of Key Vault
 LOCALADMIN_PASSWORD="${LOCALADMIN_PASSWORD:-}"
 DOMAIN_JOIN_PASSWORD="${DOMAIN_JOIN_PASSWORD:-}"
+
+# Source dynamic inventory helper (eliminates shared terraform.yml race condition)
+source "${REPO_DIR}/autodeploy/rundeck/scripts/_inventory_helper.sh"
 
 az login --identity --output none || true
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
@@ -37,8 +42,6 @@ command -v ansible-playbook >/dev/null || { echo "[job2] ERROR: ansible-playbook
 ansible-playbook --version | head -n 2 || true
 
 cd "$ANSIBLE_WORKDIR"
-
-test -f "$ANSIBLE_INVENTORY" || { echo "[job2] ERROR: inventory not found: $ANSIBLE_INVENTORY"; exit 1; }
 
 TMPDIR=$(mktemp -d)
 cleanup() {
@@ -72,26 +75,9 @@ else
   echo "[job2] no domain-join password available; playbook will use ansible/vars/vault.yml"
 fi
 
-# Create a runtime inventory with the localadmin password injected.
-export INVENTORY_RUNTIME="$TMPDIR/inventory.runtime.yml"
-export LOCALADMIN_PASSWORD
-
-# Render by copying the file and replacing the placeholder line.
-python3 - <<'PY'
-import os
-from pathlib import Path
-
-src = Path(os.environ['ANSIBLE_INVENTORY'])
-dst = Path(os.environ['INVENTORY_RUNTIME'])
-pwd = os.environ['LOCALADMIN_PASSWORD']
-
-data = src.read_text(encoding='utf-8')
-
-if '__SET_ME_VIA_RUNDECK_OR_KEYVAULT__' in data:
-    data = data.replace('__SET_ME_VIA_RUNDECK_OR_KEYVAULT__', pwd)
-
-dst.write_text(data, encoding='utf-8')
-PY
+# Generate dynamic per-VM inventory (looks up private IP from Azure)
+INVENTORY_RUNTIME="$TMPDIR/inventory.runtime.yml"
+generate_vm_inventory "$VM_NAME" "$LOCALADMIN_PASSWORD" "$INVENTORY_RUNTIME"
 
 echo "[job2] runtime inventory created"
 

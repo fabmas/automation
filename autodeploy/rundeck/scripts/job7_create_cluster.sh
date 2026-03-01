@@ -13,7 +13,6 @@ REPO_DIR="${REPO_DIR:-/opt/automation}"
 AZ_SUBSCRIPTION_ID="${AZ_SUBSCRIPTION_ID:-9af59c0f-7661-48ec-ac0d-fc61688f01ea}"
 
 ANSIBLE_WORKDIR="${ANSIBLE_WORKDIR:-${REPO_DIR}/autodeploy/ansible}"
-export ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-${ANSIBLE_WORKDIR}/inventory/terraform.yml}"
 
 KEYVAULT_NAME="${KEYVAULT_NAME:-fabmas-kv1}"
 LOCALADMIN_SECRET_NAME="${LOCALADMIN_SECRET_NAME:-winproto01-localadmin}"
@@ -28,10 +27,17 @@ CLUSTER_IP="${CLUSTER_IP:?CLUSTER_IP is required}"
 AG_NAME="${AG_NAME:?AG_NAME is required}"
 LISTENER_NAME="${LISTENER_NAME:?LISTENER_NAME is required}"
 
+# Derive target VM from secret name (should be node1)
+VM_NAME="${VM_NAME:-${LOCALADMIN_SECRET_NAME%-localadmin}}"
+
+echo "[job7] target VM (inventory): $VM_NAME"
 echo "[job7] node1=$NODE1_NAME  node2=$NODE2_NAME"
 echo "[job7] cluster=$CLUSTER_NAME ($CLUSTER_IP)"
 echo "[job7] ag=$AG_NAME  listener(DNN)=$LISTENER_NAME"
 echo "[job7] cloud witness storage=$STORAGE_ACCOUNT"
+
+# Source dynamic inventory helper (eliminates shared terraform.yml race condition)
+source "${REPO_DIR}/autodeploy/rundeck/scripts/_inventory_helper.sh"
 
 az login --identity --output none || true
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
@@ -40,7 +46,6 @@ command -v az >/dev/null || { echo "[job7] ERROR: az not found"; exit 1; }
 command -v ansible-playbook >/dev/null || { echo "[job7] ERROR: ansible-playbook not found"; exit 1; }
 
 cd "$ANSIBLE_WORKDIR"
-test -f "$ANSIBLE_INVENTORY" || { echo "[job7] ERROR: inventory not found: $ANSIBLE_INVENTORY"; exit 1; }
 
 TMPDIR=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR"; }
@@ -50,25 +55,9 @@ umask 077
 echo "[job7] reading localadmin password from Key Vault: $KEYVAULT_NAME/$LOCALADMIN_SECRET_NAME"
 LOCALADMIN_PASSWORD=$(az keyvault secret show --vault-name "$KEYVAULT_NAME" --name "$LOCALADMIN_SECRET_NAME" --query value -o tsv)
 
-# Build runtime inventory targeting node1 (which orchestrates the cluster)
-export INVENTORY_RUNTIME="$TMPDIR/inventory.runtime.yml"
-export LOCALADMIN_PASSWORD
-
-python3 - <<'PY'
-import os
-from pathlib import Path
-
-src = Path(os.environ['ANSIBLE_INVENTORY'])
-dst = Path(os.environ['INVENTORY_RUNTIME'])
-pwd = os.environ['LOCALADMIN_PASSWORD']
-
-data = src.read_text(encoding='utf-8')
-if '__SET_ME_VIA_RUNDECK_OR_KEYVAULT__' in data:
-    data = data.replace('__SET_ME_VIA_RUNDECK_OR_KEYVAULT__', pwd)
-dst.write_text(data, encoding='utf-8')
-PY
-
-echo "[job7] runtime inventory created"
+# Generate dynamic inventory targeting node1 (which orchestrates cluster creation)
+INVENTORY_RUNTIME="$TMPDIR/inventory.runtime.yml"
+generate_vm_inventory "$VM_NAME" "$LOCALADMIN_PASSWORD" "$INVENTORY_RUNTIME"
 unset LOCALADMIN_PASSWORD
 
 # Recupera la access key dello storage account per il Cloud Witness

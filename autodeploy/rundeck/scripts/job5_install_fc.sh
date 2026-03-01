@@ -13,13 +13,18 @@ REPO_DIR="${REPO_DIR:-/opt/automation}"
 AZ_SUBSCRIPTION_ID="${AZ_SUBSCRIPTION_ID:-9af59c0f-7661-48ec-ac0d-fc61688f01ea}"
 
 ANSIBLE_WORKDIR="${ANSIBLE_WORKDIR:-${REPO_DIR}/autodeploy/ansible}"
-export ANSIBLE_INVENTORY="${ANSIBLE_INVENTORY:-${ANSIBLE_WORKDIR}/inventory/terraform.yml}"
 
 KEYVAULT_NAME="${KEYVAULT_NAME:-fabmas-kv1}"
 LOCALADMIN_SECRET_NAME="${LOCALADMIN_SECRET_NAME:-winproto01-localadmin}"
 
+# Derive VM name from secret name (e.g. sql01-localadmin -> sql01)
+VM_NAME="${VM_NAME:-${LOCALADMIN_SECRET_NAME%-localadmin}}"
+
+echo "[job5] target VM: $VM_NAME"
 echo "[job5] ansible_workdir=$ANSIBLE_WORKDIR"
-echo "[job5] inventory=$ANSIBLE_INVENTORY"
+
+# Source dynamic inventory helper (eliminates shared terraform.yml race condition)
+source "${REPO_DIR}/autodeploy/rundeck/scripts/_inventory_helper.sh"
 
 az login --identity --output none || true
 az account set --subscription "$AZ_SUBSCRIPTION_ID" >/dev/null
@@ -28,7 +33,6 @@ command -v az >/dev/null || { echo "[job5] ERROR: az not found"; exit 1; }
 command -v ansible-playbook >/dev/null || { echo "[job5] ERROR: ansible-playbook not found"; exit 1; }
 
 cd "$ANSIBLE_WORKDIR"
-test -f "$ANSIBLE_INVENTORY" || { echo "[job5] ERROR: inventory not found: $ANSIBLE_INVENTORY"; exit 1; }
 
 TMPDIR=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR"; }
@@ -38,25 +42,9 @@ umask 077
 echo "[job5] reading localadmin password from Key Vault: $KEYVAULT_NAME/$LOCALADMIN_SECRET_NAME"
 LOCALADMIN_PASSWORD=$(az keyvault secret show --vault-name "$KEYVAULT_NAME" --name "$LOCALADMIN_SECRET_NAME" --query value -o tsv)
 
-# Build runtime inventory with real password
-export INVENTORY_RUNTIME="$TMPDIR/inventory.runtime.yml"
-export LOCALADMIN_PASSWORD
-
-python3 - <<'PY'
-import os
-from pathlib import Path
-
-src = Path(os.environ['ANSIBLE_INVENTORY'])
-dst = Path(os.environ['INVENTORY_RUNTIME'])
-pwd = os.environ['LOCALADMIN_PASSWORD']
-
-data = src.read_text(encoding='utf-8')
-if '__SET_ME_VIA_RUNDECK_OR_KEYVAULT__' in data:
-    data = data.replace('__SET_ME_VIA_RUNDECK_OR_KEYVAULT__', pwd)
-dst.write_text(data, encoding='utf-8')
-PY
-
-echo "[job5] runtime inventory created"
+# Generate dynamic per-VM inventory (looks up private IP from Azure)
+INVENTORY_RUNTIME="$TMPDIR/inventory.runtime.yml"
+generate_vm_inventory "$VM_NAME" "$LOCALADMIN_PASSWORD" "$INVENTORY_RUNTIME"
 unset LOCALADMIN_PASSWORD
 
 ansible-playbook -i "$INVENTORY_RUNTIME" playbooks/install-failover-clustering.yml -v
