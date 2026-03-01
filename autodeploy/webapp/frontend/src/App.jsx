@@ -4,11 +4,11 @@ import ClusterForm from './components/ClusterForm';
 import JobStatus from './components/JobStatus';
 import {
   startDeploy, startJob2, startJob3, startJob4,
-  startJob5, startJob6, startJob7,
+  startJob5, startJob6, startJob7, startJob8,
 } from './api';
 import './index.css';
 
-/*
+  /*
   Two workflows sharing the same queue engine:
 
   VM:
@@ -21,7 +21,8 @@ import './index.css';
     2. Job 2 x2 — Domain join both               (parallel)
     3. Job 5 x2 — Install Failover Clustering    (parallel)
     4. Job 6 x2 — Install SQL Server             (parallel)
-    5. Job 7   — Create WSFC + AG                (sequential)
+    5. Job 8 x2 — Install SSMS (optional)        (parallel)
+    6. Job 7   — Create WSFC + AG                (sequential)
 
   Queue items: { type:'single', label, fn } | { type:'parallel', items:[…] }
 */
@@ -156,7 +157,7 @@ export default function App() {
 
   const handleClusterDeploy = useCallback(async ({
     node1Name, node2Name, clusterName, clusterIp,
-    agName, listenerName,
+    agName, listenerName, installSSMSNode1, installSSMSNode2,
   }) => {
     setBusy(true);
     setError('');
@@ -202,7 +203,21 @@ export default function App() {
       ],
     });
 
-    // 5 — Create WSFC cluster + AG
+    // 5 — Install SSMS (optional, per-node)
+    const ssmsJobs = [];
+    if (installSSMSNode1) {
+      ssmsJobs.push({ label: `Job 8 — SSMS "${n1}"`, fn: () => startJob8(n1) });
+    }
+    if (installSSMSNode2) {
+      ssmsJobs.push({ label: `Job 8 — SSMS "${n2}"`, fn: () => startJob8(n2) });
+    }
+    if (ssmsJobs.length > 1) {
+      queue.push({ type: 'parallel', items: ssmsJobs });
+    } else if (ssmsJobs.length === 1) {
+      queue.push({ type: 'single', ...ssmsJobs[0] });
+    }
+
+    // 6 — Create WSFC cluster + AG
     queue.push({
       type: 'single',
       label: `Job 7 — Crea Cluster "${clusterName}" + AG "${agName}"`,

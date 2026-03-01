@@ -7,6 +7,8 @@ export default function ClusterForm({ onDeploy, disabled }) {
   const [clusterIp, setClusterIp] = useState('');
   const [agName, setAgName] = useState('');
   const [listenerName, setListenerName] = useState('');
+  const [installSSMSNode1, setInstallSSMSNode1] = useState(true);
+  const [installSSMSNode2, setInstallSSMSNode2] = useState(true);
   const [error, setError] = useState('');
 
   const validateHost = (name) => /^[a-zA-Z0-9]{1,15}$/.test(name);
@@ -49,6 +51,7 @@ export default function ClusterForm({ onDeploy, disabled }) {
       node1Name, node2Name,
       clusterName, clusterIp,
       agName, listenerName,
+      installSSMSNode1, installSSMSNode2,
     });
   };
 
@@ -126,6 +129,31 @@ export default function ClusterForm({ onDeploy, disabled }) {
         />
         <p className="hint">DNN (Distributed Network Name) — no Load Balancer. Connessione: Server=SQLAG-LSN,1433;MultiSubnetFailover=True</p>
       </div>
+
+      {/* ---- SSMS ---- */}
+      <div className="form-row">
+        <div className="form-group">
+          <label>
+            <input
+              type="checkbox" checked={installSSMSNode1}
+              onChange={(e) => setInstallSSMSNode1(e.target.checked)}
+              disabled={disabled}
+            />{' '}
+            Installa SSMS su Nodo 1
+          </label>
+        </div>
+        <div className="form-group">
+          <label>
+            <input
+              type="checkbox" checked={installSSMSNode2}
+              onChange={(e) => setInstallSSMSNode2(e.target.checked)}
+              disabled={disabled}
+            />{' '}
+            Installa SSMS su Nodo 2
+          </label>
+        </div>
+      </div>
+      <p className="hint">SQL Server Management Studio — ultima versione scaricata da Microsoft</p>
 
       {error && <div className="error-banner">{error}</div>}
 

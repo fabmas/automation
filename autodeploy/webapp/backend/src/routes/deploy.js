@@ -9,6 +9,7 @@ const JOB4_ID = process.env.JOB4_ID;
 const JOB5_ID = process.env.JOB5_ID;
 const JOB6_ID = process.env.JOB6_ID;
 const JOB7_ID = process.env.JOB7_ID;
+const JOB8_ID = process.env.JOB8_ID;
 
 /**
  * POST /api/deploy
@@ -230,6 +231,33 @@ router.post('/job7', async (req, res) => {
     });
   } catch (err) {
     console.error('[deploy/job7] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/deploy/job8
+ * Body: { vmName: "sqlnode01" }
+ *
+ * Triggers Job 8 (Ansible — Install SSMS).
+ */
+router.post('/job8', async (req, res) => {
+  try {
+    const { vmName } = req.body;
+    const opts = {};
+    if (vmName) {
+      opts.localadmin_secret_name = `${vmName}-localadmin`;
+    }
+    const exec = await rundeck.runJob(JOB8_ID, opts);
+    res.json({
+      job8: {
+        executionId: exec.id,
+        href: exec.href,
+        status: exec.status,
+      },
+    });
+  } catch (err) {
+    console.error('[deploy/job8] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

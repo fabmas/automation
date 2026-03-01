@@ -1,0 +1,137 @@
+---
+# install-ssms.yml — Installa SQL Server Management Studio (unattended).
+#
+# Scarica l'ultima versione di SSMS dal link ufficiale Microsoft e installa
+# in modalità silenziosa. Usa Scheduled Task per evitare problemi WinRM.
+#
+# Variabile opzionale:
+#   ssms_download_url: URL diretto (default: https://aka.ms/ssmsfullsetup)
+#
+# Uso:
+#   ansible-playbook -i inventory/runtime.yml playbooks/install-ssms.yml
+
+- name: Install SQL Server Management Studio (unattended)
+  hosts: windows
+  gather_facts: false
+
+  vars:
+    ssms_download_url: "https://aka.ms/ssmsfullsetup"
+    ssms_setup_path: "C:\\SSMSSetup"
+
+  tasks:
+    - name: Crea cartella setup
+      ansible.windows.win_file:
+        path: "{{ ssms_setup_path }}"
+        state: directory
+
+    - name: Download SSMS installer
+      ansible.windows.win_get_url:
+        url: "{{ ssms_download_url }}"
+        dest: "{{ ssms_setup_path }}\\SSMS-Setup-ENU.exe"
+        force: false
+      register: download_result
+
+    - name: Verifica che il file sia stato scaricato
+      ansible.windows.win_stat:
+        path: "{{ ssms_setup_path }}\\SSMS-Setup-ENU.exe"
+      register: ssms_file
+
+    - name: Fail se il download è fallito
+      ansible.builtin.fail:
+        msg: "SSMS installer not found at {{ ssms_setup_path }}\\SSMS-Setup-ENU.exe"
+      when: not (ssms_file.stat.exists | default(false))
+
+    - name: Scrivi script di installazione SSMS
+      ansible.windows.win_copy:
+        dest: "{{ ssms_setup_path }}\\run_ssms_setup.ps1"
+        content: |
+          $ErrorActionPreference = 'Stop'
+          $logDir  = "{{ ssms_setup_path }}"
+          $logFile = "$logDir\ssms_install.log"
+          $exitFile = "$logDir\exitcode.txt"
+
+          Add-Content -Path $logFile -Value "$(Get-Date -Format 'HH:mm:ss')  Starting SSMS installation..."
+
+          try {
+              $proc = Start-Process -FilePath "$logDir\SSMS-Setup-ENU.exe" `
+                  -ArgumentList "/install", "/quiet", "/norestart", "/log", "$logDir\ssms_setup_log.txt" `
+                  -Wait -PassThru -NoNewWindow
+
+              Add-Content -Path $logFile -Value "$(Get-Date -Format 'HH:mm:ss')  Exit code: $($proc.ExitCode)"
+              $proc.ExitCode | Out-File -FilePath $exitFile -Encoding ascii
+          } catch {
+              Add-Content -Path $logFile -Value "$(Get-Date -Format 'HH:mm:ss')  ERROR: $($_.Exception.Message)"
+              "1" | Out-File -FilePath $exitFile -Encoding ascii
+          }
+
+    - name: Installa SSMS via Scheduled Task
+      ansible.windows.win_powershell:
+        script: |
+          $taskName   = "AnsibleSSMSSetup"
+          $scriptPath = "{{ ssms_setup_path }}\run_ssms_setup.ps1"
+          $exitFile   = "{{ ssms_setup_path }}\exitcode.txt"
+          $logFile    = "{{ ssms_setup_path }}\ssms_install.log"
+
+          # Cleanup previous run
+          foreach ($f in @($exitFile, $logFile)) { if (Test-Path $f) { Remove-Item $f -Force } }
+          Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+
+          $action   = New-ScheduledTaskAction -Execute "powershell.exe" `
+              -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+          $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+              -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+          Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings `
+              -User "{{ ansible_user }}" -Password "{{ ansible_password }}" `
+              -RunLevel Highest -Force | Out-Null
+
+          Start-ScheduledTask -TaskName $taskName
+          Write-Output "Scheduled task started — installing SSMS..."
+
+          # Poll (max 25 min)
+          $deadline = [DateTime]::UtcNow.AddMinutes(25)
+          do {
+              Start-Sleep -Seconds 10
+              $state = (Get-ScheduledTask -TaskName $taskName).State
+              Write-Output "  state=$state ($(([DateTime]::UtcNow).ToString('HH:mm:ss')))"
+          } while ($state -eq 'Running' -and [DateTime]::UtcNow -lt $deadline)
+
+          Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+
+          # Check result
+          if (-not (Test-Path $exitFile)) {
+              Write-Error "SSMS installer did not produce an exit code (timeout or crash)"
+              exit 1
+          }
+
+          $exitCode = [int](Get-Content $exitFile -Raw).Trim()
+          Write-Output "SSMS Setup exit code: $exitCode"
+
+          if ($exitCode -notin @(0, 3010)) {
+              if (Test-Path "$logFile") {
+                  Write-Output "=== ssms_install.log ==="
+                  Get-Content $logFile
+                  Write-Output "=== End ==="
+              }
+              Write-Error "SSMS installation failed with exit code $exitCode"
+              exit 1
+          }
+
+          if ($exitCode -eq 3010) { Write-Output "REBOOT_REQUIRED" }
+          Write-Output "SSMS installed successfully"
+      register: ssms_install
+      timeout: 1800
+
+    - name: Mostra output
+      ansible.builtin.debug:
+        msg: "{{ ssms_install.output | default(['N/A']) }}"
+
+    - name: Reboot se richiesto (exit code 3010)
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+      when: "'REBOOT_REQUIRED' in (ssms_install.output | default(['']) | join(''))"
+
+    - name: Cleanup installer
+      ansible.windows.win_file:
+        path: "{{ ssms_setup_path }}\\SSMS-Setup-ENU.exe"
+        state: absent
+      ignore_errors: true
