@@ -51,13 +51,25 @@
       register: mount_result
       when: sql_iso_url | length > 0
 
+    - name: Prepara TEMP directory per SQL Setup (WinRM workaround)
+      ansible.windows.win_powershell:
+        script: |
+          # WinRM sessions often have TEMP pointing to a non-existent profile dir.
+          # SQL Setup's XML serializer fails if TEMP is invalid.
+          $tempDir = "C:\Windows\Temp\SQLSetup"
+          if (-not (Test-Path $tempDir)) { New-Item -Path $tempDir -ItemType Directory -Force | Out-Null }
+          Write-Output $tempDir
+
     - name: Installa SQL Server (unattended)
       ansible.windows.win_powershell:
         script: |
+          # Force TEMP/TMP to a known-good writable directory (WinRM workaround)
+          $env:TEMP = "C:\Windows\Temp\SQLSetup"
+          $env:TMP  = "C:\Windows\Temp\SQLSetup"
+
           $setupDrive = "{{ mount_result.output[0] | default('D') }}"
           $setupPath = "${setupDrive}:\setup.exe"
           if (-not (Test-Path $setupPath)) {
-              # Fallback: cerca in sql_setup_path
               $setupPath = "{{ sql_setup_path }}\setup.exe"
           }
           if (-not (Test-Path $setupPath)) {
@@ -65,26 +77,32 @@
               exit 1
           }
 
-          $setupArgs = @(
-              "/Q",
-              "/IACCEPTSQLSERVERLICENSETERMS=True",
-              "/ACTION=Install",
-              "/FEATURES={{ sql_features }}",
-              "/INSTANCENAME={{ sql_instance_name }}",
-              "/SQLSVCACCOUNT=`"{{ sql_svc_account }}`"",
-              "/AGTSVCACCOUNT=`"{{ sql_agent_svc_account }}`"",
-              "/SQLSYSADMINACCOUNTS=`"BUILTIN\Administrators`"",
-              "/SECURITYMODE=SQL",
-              "/SAPWD=`"{{ sql_sa_password }}`"",
-              "/SQLCOLLATION={{ sql_collation }}",
-              "/TCPENABLED=1",
-              "/NPENABLED=0",
-              "/UpdateEnabled=False",
-              "/ENU"
-          )
+          $setupArgs = '/Q /IACCEPTSQLSERVERLICENSETERMS /ACTION=Install ' +
+              '/FEATURES={{ sql_features }} ' +
+              '/INSTANCENAME={{ sql_instance_name }} ' +
+              '/SQLSVCACCOUNT="{{ sql_svc_account }}" ' +
+              '/AGTSVCACCOUNT="{{ sql_agent_svc_account }}" ' +
+              '/SQLSYSADMINACCOUNTS="BUILTIN\Administrators" ' +
+              '/SECURITYMODE=SQL ' +
+              '/SAPWD="{{ sql_sa_password }}" ' +
+              '/SQLCOLLATION={{ sql_collation }} ' +
+              '/TCPENABLED=1 /NPENABLED=0 /UpdateEnabled=False /ENU'
 
-          $proc = Start-Process -FilePath $setupPath -ArgumentList $setupArgs -Wait -PassThru -NoNewWindow
+          Write-Output "Running: $setupPath (args omitted for security)"
+          $proc = Start-Process -FilePath $setupPath -ArgumentList $setupArgs `
+              -Wait -PassThru -NoNewWindow `
+              -RedirectStandardOutput "C:\Windows\Temp\SQLSetup\setup_stdout.txt" `
+              -RedirectStandardError  "C:\Windows\Temp\SQLSetup\setup_stderr.txt"
+
+          Write-Output "Exit code: $($proc.ExitCode)"
           if ($proc.ExitCode -notin @(0, 3010)) {
+              # Read Summary.txt for diagnostics
+              $summaryPath = Get-ChildItem "C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\Log\Summary.txt" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if ($summaryPath) {
+                  Write-Output "=== Summary.txt ==="
+                  Get-Content $summaryPath.FullName -Tail 60
+                  Write-Output "=== End Summary.txt ==="
+              }
               Write-Error "SQL Setup failed with exit code $($proc.ExitCode)"
               exit 1
           }
