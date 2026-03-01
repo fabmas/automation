@@ -114,10 +114,10 @@
           # Create and run scheduled task as localadmin (Batch logon → DPAPI works)
           $action  = New-ScheduledTaskAction -Execute "powershell.exe" `
               -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
-          $principal = New-ScheduledTaskPrincipal -UserId "{{ ansible_user }}" `
-              -LogonType Password -RunLevel Highest
-          Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal `
-              -Password "{{ ansible_password }}" -Force | Out-Null
+          $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+          Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings `
+              -User "{{ ansible_user }}" -Password "{{ ansible_password }}" `
+              -RunLevel Highest -Force | Out-Null
 
           Start-ScheduledTask -TaskName $taskName
           Write-Output "Scheduled task started — waiting for SQL Setup to finish..."
