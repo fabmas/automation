@@ -103,7 +103,7 @@ resource "azurerm_windows_virtual_machine" "vm" {
   source_image_reference {
     publisher = "MicrosoftWindowsServer"
     offer     = "WindowsServer"
-    sku       = "2022-datacenter-azure-edition"
+    sku       = "2025-datacenter-azure-edition"
     version   = "latest"
   }
 
