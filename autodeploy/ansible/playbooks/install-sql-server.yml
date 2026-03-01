@@ -65,9 +65,9 @@
               exit 1
           }
 
-          $args = @(
+          $setupArgs = @(
               "/Q",
-              "/IACCEPTSQLSERVERLICENSETERMS",
+              "/IACCEPTSQLSERVERLICENSETERMS=True",
               "/ACTION=Install",
               "/FEATURES={{ sql_features }}",
               "/INSTANCENAME={{ sql_instance_name }}",
@@ -79,10 +79,11 @@
               "/SQLCOLLATION={{ sql_collation }}",
               "/TCPENABLED=1",
               "/NPENABLED=0",
-              "/UpdateEnabled=False"
+              "/UpdateEnabled=False",
+              "/ENU"
           )
 
-          $proc = Start-Process -FilePath $setupPath -ArgumentList $args -Wait -PassThru -NoNewWindow
+          $proc = Start-Process -FilePath $setupPath -ArgumentList $setupArgs -Wait -PassThru -NoNewWindow
           if ($proc.ExitCode -notin @(0, 3010)) {
               Write-Error "SQL Setup failed with exit code $($proc.ExitCode)"
               exit 1
